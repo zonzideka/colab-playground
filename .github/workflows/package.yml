@@ -160,7 +160,7 @@ jobs:
             <key>CFBundleIconFile</key>
             <string>AppIcon</string>
             <key>CFBundleIdentifier</key>
-            <string>io.github.scarletkc.colab-playground</string>
+            <string>io.github.zonzideka.colab-playground</string>
             <key>CFBundleInfoDictionaryVersion</key>
             <string>6.0</string>
             <key>CFBundleName</key>

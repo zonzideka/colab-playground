@@ -6,16 +6,16 @@
 
 **A desktop app for the Google Colab CLI: accounts, GPU sessions with cost guards, port forwarding and plugins.**
 
-[Download](https://github.com/scarletkc/colab-playground/releases/latest) | [Usage](docs/USAGE.md) | [Plugins](docs/PLUGINS.md) | [Roadmap](docs/ROADMAP.md)
+[Download](https://github.com/zonzideka/colab-playground/releases/latest) | [Usage](docs/USAGE.md) | [Plugins](docs/PLUGINS.md) | [Roadmap](docs/ROADMAP.md)
 
-[![Latest release](https://img.shields.io/github/v/release/scarletkc/colab-playground?logo=github)](https://github.com/scarletkc/colab-playground/releases/latest)
-[![CI](https://img.shields.io/github/actions/workflow/status/scarletkc/colab-playground/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/scarletkc/colab-playground/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/zonzideka/colab-playground?logo=github)](https://github.com/zonzideka/colab-playground/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/zonzideka/colab-playground/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/zonzideka/colab-playground/actions/workflows/ci.yml)
 [![Built with Rust and GPUI](https://img.shields.io/badge/built%20with-Rust%20%2B%20GPUI-B7410E?logo=rust&logoColor=white)](https://www.gpui.rs/)
-[![License](https://img.shields.io/github/license/scarletkc/colab-playground)](LICENSE)
+[![License](https://img.shields.io/github/license/zonzideka/colab-playground)](LICENSE)
 
-[![Download for Windows x64](https://img.shields.io/badge/Download-Windows%20x64-0078D4?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0wIDBoMTF2MTFIMHpNMTMgMGgxMXYxMUgxM3pNMCAxM2gxMXYxMUgwek0xMyAxM2gxMXYxMUgxM3oiLz48L3N2Zz4=)](https://github.com/scarletkc/colab-playground/releases/latest)
-[![Download for macOS on Apple silicon](https://img.shields.io/badge/Download-macOS%20Apple%20silicon-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/scarletkc/colab-playground/releases/latest)
-[![Download for Linux x64](https://img.shields.io/badge/Download-Linux%20x64-FCC624?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/scarletkc/colab-playground/releases/latest)
+[![Download for Windows x64](https://img.shields.io/badge/Download-Windows%20x64-0078D4?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0wIDBoMTF2MTFIMHpNMTMgMGgxMXYxMUgxM3pNMCAxM2gxMXYxMUgwek0xMyAxM2gxMXYxMUgxM3oiLz48L3N2Zz4=)](https://github.com/zonzideka/colab-playground/releases/latest)
+[![Download for macOS on Apple silicon](https://img.shields.io/badge/Download-macOS%20Apple%20silicon-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/zonzideka/colab-playground/releases/latest)
+[![Download for Linux x64](https://img.shields.io/badge/Download-Linux%20x64-FCC624?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/zonzideka/colab-playground/releases/latest)
 
 Which file to pick, what the first launch asks and how updates work: [Install a release](docs/USAGE.md#install-a-release).
 
