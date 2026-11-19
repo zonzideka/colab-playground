@@ -106,6 +106,50 @@ mod reconciliation_tests {
     }
 
     #[test]
+    fn a_recorded_stop_is_not_overwritten_by_a_later_reconcile() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = RealConfig::for_app(Defaults::default()).unwrap();
+        config.local_dir = dir.path().to_owned();
+        let backend = RealBackend::new(config).unwrap();
+        let account = AccountId::new("alice").unwrap();
+        backend
+            .inner
+            .st()
+            .ledger
+            .upsert(TrackedSession {
+                name: "stopped".into(),
+                account: account.clone(),
+                endpoint: Some("endpoint-stopped".into()),
+                accelerator: Accelerator::T4,
+                high_mem: false,
+                gpu: None,
+                vram_mib: None,
+                policy: GuardPolicy::default(),
+                spend: SpendMeter::new(SystemTime::UNIX_EPOCH),
+                watchdog: None,
+                stopped: Some(StopRecord {
+                    at: SystemTime::UNIX_EPOCH,
+                    reason: StopReason::User,
+                }),
+                stop_pending_confirmation: None,
+            })
+            .unwrap();
+        let sample = backend.inner.reconciliation_sample();
+        let vanished = backend.inner.reconcile(&account, &[], None, &sample);
+        assert!(vanished.is_empty());
+        let entry = backend
+            .inner
+            .st()
+            .ledger
+            .entries()
+            .iter()
+            .find(|e| e.name == "stopped")
+            .unwrap()
+            .clone();
+        assert_eq!(entry.stopped.map(|s| s.reason), Some(StopReason::User));
+    }
+
+    #[test]
     fn a_session_that_ended_is_reported_even_when_the_ledger_cannot_be_saved() {
         let dir = tempfile::tempdir().unwrap();
         let mut config = RealConfig::for_app(Defaults::default()).unwrap();
