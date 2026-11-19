@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/zonzideka/colab-playground/compare/v0.2.1...v0.2.2) (2026-11-19)
+
+
+### Fixed
+
+* **core:** record the stop instead of dropping it when the session name is unresolved ([#5](https://github.com/zonzideka/colab-playground/issues/5)) ([3ce5bd3](https://github.com/zonzideka/colab-playground/commit/3ce5bd3f3a4d777bfe754ffe9635560696ee5ab0))
+
 ## [0.2.1](https://github.com/zonzideka/colab-playground/compare/v0.2.0...v0.2.1) (2026-11-19)
 
 
