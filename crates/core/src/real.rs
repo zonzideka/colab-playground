@@ -612,6 +612,10 @@ impl Inner {
             }
         }
         let state = self.layout(cancel)?.account_state(account);
+        // The CLI writes its state file and lock inside this directory but
+        // does not create the directory itself; a brand-new account whose
+        // first action is a session start fails with FileNotFoundError.
+        self.fs().ensure_dir(&state.parent(), cancel)?;
         Ok((guard, self.cli()?, state))
     }
 

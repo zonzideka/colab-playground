@@ -36,6 +36,9 @@ cp -- "$1" "$2" && echo copied"#;
 
 const REMOVE: &str = r#"rm -f -- "$1""#;
 
+const ENSURE_DIR: &str = r#"umask 077
+mkdir -p -- "$1""#;
+
 impl<'a> HostFs<'a> {
     pub fn new(host: &'a Host, env: &'a [(String, String)]) -> Self {
         HostFs { host, env }
@@ -99,6 +102,18 @@ impl<'a> HostFs<'a> {
             return Err(Error::new(ErrorKind::Io).detail(tail(&out.stderr, 300)));
         }
         Ok(out.stdout.lines().any(|l| l.trim() == "copied"))
+    }
+
+    /// Creates a directory and its parents (owner-only). Existing is fine.
+    pub fn ensure_dir(&self, path: &HostPath, cancel: &CancelToken) -> Result<()> {
+        let out = self
+            .host
+            .run_quiet(self.req(ENSURE_DIR).arg(path.as_str()), cancel)?;
+        if out.success() {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorKind::Io).detail(tail(&out.stderr, 300)))
+        }
     }
 
     /// Removes a file (missing is fine).
