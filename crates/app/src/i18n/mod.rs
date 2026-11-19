@@ -316,6 +316,7 @@ catalog_keys! {
     ERR_BUSY => "app.err.busy",
     ERR_PROVISION_EXHAUSTED => "app.err.provision_exhausted",
     ERR_ORPHAN_SUSPECTED => "app.err.orphan_suspected",
+    ERR_STOP_UNCONFIRMED => "app.err.stop_unconfirmed",
     ERR_MANIFEST_INVALID => "app.err.manifest_invalid",
     ERR_PLUGIN_EXISTS => "app.err.plugin_exists",
     ERR_PLUGIN_NOT_FOUND => "app.err.plugin_not_found",

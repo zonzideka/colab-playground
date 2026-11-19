@@ -157,9 +157,17 @@ pub struct GuardDecision {
 pub struct GuardReport {
     /// Decisions for every tracked live session.
     pub decisions: Vec<GuardDecision>,
-    /// Sessions found gone since the last poll.
-    pub vanished: Vec<RuntimeRef>,
+    /// Sessions found gone since the last poll, with why they ended.
+    pub vanished: Vec<Vanished>,
     pub usage: Vec<AccountUsageView>,
+}
+
+/// A session found gone since the last poll, and why it ended.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Vanished {
+    pub runtime: RuntimeRef,
+    /// Why it ended: confirmed as the user's stop, or it simply disappeared.
+    pub reason: StopReason,
 }
 
 /// What switching to another account affects (shown before confirming).

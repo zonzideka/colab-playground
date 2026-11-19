@@ -13,6 +13,7 @@ use colab_playground_core::{
     Error, ErrorKind,
     backend::{GuardReport, Runtime, RuntimeRef, RuntimesView, StopOptions},
     guard::{Concern, Decision},
+    sessions::StopReason,
     tunnel::{TunnelId, TunnelInfo},
 };
 use ely_gpui_component::{feedback::Toast, primitives::Severity};
@@ -480,7 +481,8 @@ impl AppState {
                 }
             }
         }
-        for target in report.vanished {
+        for gone in report.vanished {
+            let target = gone.runtime;
             let label = self
                 .runtime(&target)
                 .map(runtime_label)
@@ -494,7 +496,12 @@ impl AppState {
                     .severity(Severity::Info),
                 cx,
             );
-            self.record_ended(target, label, email, EndReason::Vanished, self.usage_now());
+            let reason = match gone.reason {
+                StopReason::User => EndReason::User,
+                StopReason::Guard { concern } => EndReason::Guard(concern),
+                StopReason::Provision | StopReason::Vanished => EndReason::Vanished,
+            };
+            self.record_ended(target, label, email, reason, self.usage_now());
             changed = true;
         }
         if changed {

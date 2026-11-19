@@ -25,7 +25,7 @@ use colab_playground_core::paths::HostPath;
 use colab_playground_core::plugins::InputValue;
 use colab_playground_core::provision::{ProvisionEvent, ProvisionSpec, WATCHDOG_ATTEMPTS};
 use colab_playground_core::real::{RealBackend, RealConfig};
-use colab_playground_core::sessions::{Accelerator, StopReason, WatchdogInfo};
+use colab_playground_core::sessions::{Accelerator, Ledger, StopReason, StopRecord, WatchdogInfo};
 use colab_playground_core::tunnel::{TunnelEvent, TunnelSpec, TunnelState};
 use colab_playground_core::vm::RunState;
 use colab_playground_core::{CancelToken, Defaults, ErrorKind, Host, ManualClock, Toolchain};
@@ -870,14 +870,14 @@ fn usage_guard_stop_and_vanished_sessions() {
     let r = f.b.guard_poll(&nc()).unwrap();
     assert_eq!(r.vanished.len(), 1);
     assert_eq!(
-        r.vanished[0],
+        r.vanished[0].runtime,
         RuntimeRef {
             account: alice.id.clone(),
-            endpoint: r.vanished[0].endpoint.clone(),
+            endpoint: r.vanished[0].runtime.endpoint.clone(),
             name: Some("vanish".into())
         }
     );
-    let _ = StopReason::Vanished;
+    assert_eq!(r.vanished[0].reason, StopReason::Vanished);
 }
 
 #[test]
@@ -1036,7 +1036,7 @@ fn a_session_without_an_endpoint_ends_once_nothing_listed_could_be_it() {
     f.edit_server(|s| s["accounts"]["alice"]["assignments"] = json!({}));
     let report = f.b.guard_poll(&nc()).unwrap();
     assert_eq!(report.vanished.len(), 1);
-    assert_eq!(report.vanished[0].name.as_deref(), Some("managed"));
+    assert_eq!(report.vanished[0].runtime.name.as_deref(), Some("managed"));
     assert!(report.usage[0].ownership_verified);
 }
 
@@ -1064,6 +1064,51 @@ fn a_stop_without_an_endpoint_suspects_an_orphan_and_releases_nothing() {
             .unwrap_err();
     assert!(err.is(ErrorKind::OrphanSuspected), "{err}");
     assert_eq!(f.assignments("alice").len(), 1);
+}
+
+#[test]
+fn a_stop_whose_confirmation_listing_fails_is_finalised_as_user_stopped() {
+    let f = fixture();
+    f.adopt_alice();
+    f.provision("stop-pending", Accelerator::T4);
+    let target = f.b.runtimes(&nc()).unwrap().runtimes[0].id.clone();
+
+    // The stop releases the runtime, then the one confirmation listing errors.
+    f.knob("list_assignments_fail_once", json!(true));
+    let err =
+        f.b.stop_session(&target, StopOptions::default(), &nc())
+            .unwrap_err();
+    assert!(err.is(ErrorKind::StopUnconfirmed), "{err}");
+    assert!(!err.is(ErrorKind::OrphanSuspected));
+
+    // The next listing sees the (now empty) server list, so reconcile confirms
+    // the stop and records the user's reason rather than a vanish.
+    let report = f.b.guard_poll(&nc()).unwrap();
+    assert_eq!(report.vanished.len(), 1);
+    assert_eq!(
+        report.vanished[0].runtime.name.as_deref(),
+        Some("stop-pending")
+    );
+    assert_eq!(report.vanished[0].reason, StopReason::User);
+
+    let ledger = Ledger::load(&f.cfg.local_dir.join("ledger.json")).unwrap();
+    let entry = ledger
+        .entries()
+        .iter()
+        .find(|e| e.name == "stop-pending")
+        .unwrap();
+    assert!(matches!(
+        entry.stopped,
+        Some(StopRecord {
+            reason: StopReason::User,
+            ..
+        })
+    ));
+    assert!(entry.stop_pending_confirmation.is_none());
+    assert!(
+        ledger.entries().iter().all(|e| e.stopped.is_some()),
+        "no session is left live"
+    );
 }
 
 #[test]

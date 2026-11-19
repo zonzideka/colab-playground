@@ -227,6 +227,13 @@ pub struct TrackedSession {
     pub watchdog: Option<WatchdogInfo>,
     #[serde(default)]
     pub stopped: Option<StopRecord>,
+    /// When set, a stop was requested and the runtime was released, but whether
+    /// the endpoint actually disappeared could not yet be confirmed. It holds
+    /// the intended stop reason; reconcile finalises it into `stopped` once the
+    /// endpoint is confirmed gone (and drops it when the runtime turns out to
+    /// be a real orphan).
+    #[serde(default)]
+    pub stop_pending_confirmation: Option<StopReason>,
 }
 
 impl TrackedSession {
@@ -435,6 +442,7 @@ mod tests {
                     armed: true,
                 }),
                 stopped: None,
+                stop_pending_confirmation: None,
             })
             .unwrap();
         let again = Ledger::load(&path).unwrap();
@@ -481,6 +489,7 @@ mod tests {
             spend: SpendMeter::new(t0),
             watchdog: Some(wd),
             stopped: None,
+            stop_pending_confirmation: None,
         };
         assert_eq!(s.auto_stop_at(), Some(t0 + Duration::from_secs(600)));
         s.watchdog = Some(dead);

@@ -418,6 +418,7 @@ pub(super) const MESSAGES: Messages = &[
         "尝试了 {attempts} 次，都没有获得所需的硬件。",
     ),
     (ERR_ORPHAN_SUSPECTED, "可能仍有运行时在运行并计费。"),
+    (ERR_STOP_UNCONFIRMED, "已请求停止，等待确认。"),
     (ERR_MANIFEST_INVALID, "插件的描述文件无效。"),
     (ERR_PLUGIN_EXISTS, "此插件已安装。"),
     (ERR_PLUGIN_NOT_FOUND, "未安装该插件。"),

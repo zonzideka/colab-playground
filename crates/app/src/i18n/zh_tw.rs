@@ -426,6 +426,7 @@ pub(super) const MESSAGES: Messages = &[
         "嘗試了 {attempts} 次，都沒有取得所需的硬體。",
     ),
     (ERR_ORPHAN_SUSPECTED, "可能仍有執行階段在執行並計費。"),
+    (ERR_STOP_UNCONFIRMED, "已要求停止，等待確認。"),
     (ERR_MANIFEST_INVALID, "外掛程式的描述檔無效。"),
     (ERR_PLUGIN_EXISTS, "這個外掛程式已安裝。"),
     (ERR_PLUGIN_NOT_FOUND, "未安裝該外掛程式。"),

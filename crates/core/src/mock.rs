@@ -500,7 +500,7 @@ impl World {
             .collect()
     }
 
-    fn reconcile(&mut self, id: &AccountId, now: SystemTime) -> (bool, Vec<RuntimeRef>) {
+    fn reconcile(&mut self, id: &AccountId, now: SystemTime) -> (bool, Vec<Vanished>) {
         if self.listing_fails_for(id) {
             return (false, Vec::new());
         }
@@ -551,10 +551,13 @@ impl World {
                 {
                     verified = false;
                 }
-                vanished.push(RuntimeRef {
-                    account: id.clone(),
-                    endpoint,
-                    name: Some(e.name),
+                vanished.push(Vanished {
+                    runtime: RuntimeRef {
+                        account: id.clone(),
+                        endpoint,
+                        name: Some(e.name),
+                    },
+                    reason: StopReason::Vanished,
                 });
             }
         }
@@ -584,10 +587,13 @@ impl World {
                 {
                     verified = false;
                 }
-                vanished.push(RuntimeRef {
-                    account: id.clone(),
-                    endpoint: String::new(),
-                    name: Some(name),
+                vanished.push(Vanished {
+                    runtime: RuntimeRef {
+                        account: id.clone(),
+                        endpoint: String::new(),
+                        name: Some(name),
+                    },
+                    reason: StopReason::Vanished,
                 });
             }
         } else if !unmatched.is_empty() {
@@ -750,6 +756,7 @@ impl MockBackend {
                     policy,
                     spend: SpendMeter::new(started),
                     stopped: None,
+                    stop_pending_confirmation: None,
                 });
             }
         }
@@ -1516,6 +1523,7 @@ impl Backend for MockBackend {
             spend: SpendMeter::new(outcome.started_at),
             watchdog: outcome.watchdog.clone(),
             stopped: None,
+            stop_pending_confirmation: None,
         })?;
         Ok(outcome)
     }
@@ -1646,11 +1654,9 @@ impl Backend for MockBackend {
                 .collect()
         };
         for e in live {
-            if report
-                .vanished
-                .iter()
-                .any(|v| v.account == e.account && v.name.as_deref() == Some(&e.name))
-            {
+            if report.vanished.iter().any(|v| {
+                v.runtime.account == e.account && v.runtime.name.as_deref() == Some(&e.name)
+            }) {
                 continue;
             }
             let (decision, target) = {
@@ -2183,7 +2189,13 @@ mod tests {
             endpoint: String::new(),
             name: Some("cpu-0b5e".into()),
         };
-        assert_eq!(report.vanished, [cpu]);
+        assert_eq!(
+            report.vanished,
+            [Vanished {
+                runtime: cpu,
+                reason: StopReason::Vanished
+            }]
+        );
         assert!(verified(&report.usage, &other));
         m.remove_account(&other, &nc()).unwrap();
 

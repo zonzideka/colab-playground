@@ -93,6 +93,7 @@ mod reconciliation_tests {
             spend: SpendMeter::new(SystemTime::UNIX_EPOCH),
             watchdog: None,
             stopped: None,
+            stop_pending_confirmation: None,
         };
         backend.inner.st().ledger.upsert(entry("old")).unwrap();
         let sample = backend.inner.reconciliation_sample();
@@ -100,7 +101,7 @@ mod reconciliation_tests {
         backend.inner.st().ledger.upsert(entry("new")).unwrap();
         let vanished = backend.inner.reconcile(&account, &listing, None, &sample);
         assert_eq!(vanished.len(), 1);
-        assert_eq!(vanished[0].name.as_deref(), Some("old"));
+        assert_eq!(vanished[0].runtime.name.as_deref(), Some("old"));
         assert!(backend.inner.st().ledger.live(&account, "new").is_some());
     }
 
@@ -128,6 +129,7 @@ mod reconciliation_tests {
                     spend: SpendMeter::new(SystemTime::UNIX_EPOCH),
                     watchdog: None,
                     stopped: None,
+                    stop_pending_confirmation: None,
                 })
                 .unwrap();
         }
@@ -139,7 +141,10 @@ mod reconciliation_tests {
         assert!(backend.inner.st().ledger.save().is_err());
 
         let vanished = backend.inner.reconcile(&account, &[], None, &sample);
-        let names: Vec<_> = vanished.iter().filter_map(|r| r.name.as_deref()).collect();
+        let names: Vec<_> = vanished
+            .iter()
+            .filter_map(|r| r.runtime.name.as_deref())
+            .collect();
         assert_eq!(names, ["first", "second"]);
         assert!(backend.inner.st().ledger.live(&account, "first").is_none());
         assert!(backend.inner.st().ledger.live(&account, "second").is_none());
@@ -168,6 +173,7 @@ mod reconciliation_tests {
                 spend: SpendMeter::new(SystemTime::UNIX_EPOCH),
                 watchdog: None,
                 stopped: None,
+                stop_pending_confirmation: None,
             })
             .unwrap();
         let listing = |endpoint: &str| {
@@ -222,6 +228,7 @@ mod reconciliation_tests {
             spend: SpendMeter::new(SystemTime::UNIX_EPOCH),
             watchdog: None,
             stopped: None,
+            stop_pending_confirmation: None,
         };
         let listing = |endpoints: &[&str]| -> Vec<RemoteAssignment> {
             endpoints
@@ -257,10 +264,13 @@ mod reconciliation_tests {
         let vanished = backend
             .inner
             .reconcile(&account, &listing(&["a-known"]), None, &sample);
-        let lost = RuntimeRef {
-            account: account.clone(),
-            endpoint: String::new(),
-            name: Some("lost".into()),
+        let lost = Vanished {
+            runtime: RuntimeRef {
+                account: account.clone(),
+                endpoint: String::new(),
+                name: Some("lost".into()),
+            },
+            reason: StopReason::Vanished,
         };
         assert_eq!(vanished, [lost]);
         assert!(!live(&backend, "lost"));
@@ -280,7 +290,10 @@ mod reconciliation_tests {
             .upsert(entry("late", None))
             .unwrap();
         let vanished = backend.inner.reconcile(&account, &[], None, &sample);
-        let names: Vec<_> = vanished.iter().filter_map(|r| r.name.as_deref()).collect();
+        let names: Vec<_> = vanished
+            .iter()
+            .filter_map(|r| r.runtime.name.as_deref())
+            .collect();
         assert_eq!(names, ["first", "second"]);
         assert!(live(&backend, "late"));
     }
@@ -304,6 +317,7 @@ mod reconciliation_tests {
             spend: SpendMeter::new(SystemTime::UNIX_EPOCH),
             watchdog: None,
             stopped: None,
+            stop_pending_confirmation: None,
         };
         for endpoint in [
             None,
@@ -751,6 +765,15 @@ impl Inner {
         });
     }
 
+    /// Records a stop whose release succeeded but whose confirmation listing
+    /// failed: the intended reason is kept on the live entry and reconcile
+    /// finalises it once the endpoint is confirmed gone.
+    fn mark_stop_pending(&self, account: &AccountId, name: &str, reason: StopReason) {
+        let _ = self.st().ledger.update(account, name, |e| {
+            e.stop_pending_confirmation = Some(reason);
+        });
+    }
+
     /// Names recorded in an account's state file, by endpoint.
     fn state_names(
         &self,
@@ -798,7 +821,8 @@ impl Inner {
         list: &[RemoteAssignment],
         names: Option<&BTreeMap<String, String>>,
         sample: &BTreeMap<AccountId, Vec<TrackedSession>>,
-    ) -> Vec<RuntimeRef> {
+    ) -> Vec<Vanished> {
+        let listed = |endpoint: &str| list.iter().any(|a| a.endpoint == endpoint);
         let mut st = self.st();
         let live: Vec<_> = st
             .ledger
@@ -822,7 +846,37 @@ impl Inner {
         // A failed save keeps the change in memory and the next save writes it, so the
         // round goes on: a session that ended is still reported.
         for e in live {
-            let listed = |endpoint: &str| list.iter().any(|a| a.endpoint == endpoint);
+            // A stop whose release succeeded but whose confirmation listing failed is
+            // finalised here: once the endpoint is gone from the server's list the stop
+            // is confirmed, otherwise the runtime is a real orphan and stays live.
+            if let Some(reason) = e.stop_pending_confirmation.clone() {
+                let gone = e
+                    .endpoint
+                    .as_deref()
+                    .is_none_or(|endpoint| !listed(endpoint));
+                if gone {
+                    let _ = st.ledger.update(account, &e.name, |x| {
+                        x.stop_pending_confirmation = None;
+                        x.stopped = Some(StopRecord {
+                            at: self.now(),
+                            reason: reason.clone(),
+                        });
+                    });
+                    vanished.push(Vanished {
+                        runtime: RuntimeRef {
+                            account: account.clone(),
+                            endpoint: e.endpoint.clone().unwrap_or_default(),
+                            name: Some(e.name),
+                        },
+                        reason,
+                    });
+                } else {
+                    let _ = st
+                        .ledger
+                        .update(account, &e.name, |x| x.stop_pending_confirmation = None);
+                }
+                continue;
+            }
             let Some(endpoint) = e.endpoint.clone() else {
                 // The state file may still hold the record of an earlier session with this
                 // name, so only an endpoint the listing confirms is taken from it, and an
@@ -850,10 +904,13 @@ impl Inner {
                         reason: StopReason::Vanished,
                     });
                 });
-                vanished.push(RuntimeRef {
-                    account: account.clone(),
-                    endpoint,
-                    name: Some(e.name),
+                vanished.push(Vanished {
+                    runtime: RuntimeRef {
+                        account: account.clone(),
+                        endpoint,
+                        name: Some(e.name),
+                    },
+                    reason: StopReason::Vanished,
                 });
             }
         }
@@ -874,10 +931,13 @@ impl Inner {
                         reason: StopReason::Vanished,
                     });
                 });
-                vanished.push(RuntimeRef {
-                    account: account.clone(),
-                    endpoint: String::new(),
-                    name: Some(name),
+                vanished.push(Vanished {
+                    runtime: RuntimeRef {
+                        account: account.clone(),
+                        endpoint: String::new(),
+                        name: Some(name),
+                    },
+                    reason: StopReason::Vanished,
                 });
             }
         }
@@ -888,7 +948,7 @@ impl Inner {
         &self,
         ids: &[AccountId],
         cancel: &CancelToken,
-    ) -> (BTreeSet<AccountId>, Vec<RuntimeRef>) {
+    ) -> (BTreeSet<AccountId>, Vec<Vanished>) {
         let mut verified = BTreeSet::new();
         let mut vanished = Vec::new();
         let sample = self.reconciliation_sample();
@@ -964,13 +1024,19 @@ impl Inner {
                 );
             }
             Some(Err(e)) => {
-                return Err(Error::new(ErrorKind::OrphanSuspected)
+                if let Some(n) = &name {
+                    self.mark_stop_pending(&target.account, n, opts.reason.clone());
+                }
+                return Err(Error::new(ErrorKind::StopUnconfirmed)
                     .with("endpoint", &target.endpoint)
                     .detail(e.to_string()));
             }
             None => {
+                if let Some(n) = &name {
+                    self.mark_stop_pending(&target.account, n, opts.reason.clone());
+                }
                 return Err(
-                    Error::new(ErrorKind::OrphanSuspected).with("endpoint", &target.endpoint)
+                    Error::new(ErrorKind::StopUnconfirmed).with("endpoint", &target.endpoint)
                 );
             }
         }
@@ -1667,6 +1733,7 @@ impl Backend for RealBackend {
             spend: SpendMeter::new(outcome.started_at),
             watchdog: outcome.watchdog.clone(),
             stopped: None,
+            stop_pending_confirmation: None,
         })?;
         Ok(outcome)
     }
@@ -1805,7 +1872,12 @@ impl Backend for RealBackend {
         let vanished: BTreeSet<(AccountId, String)> = report
             .vanished
             .iter()
-            .filter_map(|r| r.name.clone().map(|n| (r.account.clone(), n)))
+            .filter_map(|r| {
+                r.runtime
+                    .name
+                    .clone()
+                    .map(|n| (r.runtime.account.clone(), n))
+            })
             .collect();
         for e in live {
             if vanished.contains(&(e.account.clone(), e.name.clone())) {
