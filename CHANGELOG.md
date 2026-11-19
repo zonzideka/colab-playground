@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1](https://github.com/zonzideka/colab-playground/compare/v0.2.0...v0.2.1) (2026-11-19)
+
+
+### Fixed
+
+* **core:** create the account state directory before invoking the CLI ([#3](https://github.com/zonzideka/colab-playground/issues/3)) ([0ede47e](https://github.com/zonzideka/colab-playground/commit/0ede47ed197204d659cbd9ee42ebb842fd1fc26b))
+* **core:** end a session whose runtime was never recorded once nothing running could be it ([#38](https://github.com/zonzideka/colab-playground/issues/38)) ([9e5eb7e](https://github.com/zonzideka/colab-playground/commit/9e5eb7e34b7b1f8eb4800e66a1cf6243bf0ea6f7))
+* **core:** keep the user's stop reason when confirmation listing fails ([#4](https://github.com/zonzideka/colab-playground/issues/4)) ([7ae4348](https://github.com/zonzideka/colab-playground/commit/7ae43483271609fc8df6c01de2bd7e925999b0e2))
+
 ## [0.2.0](https://github.com/scarletkc/colab-playground/compare/v0.1.0...v0.2.0) (2026-11-18)
 
 
