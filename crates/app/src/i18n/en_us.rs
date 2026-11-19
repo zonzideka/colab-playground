@@ -515,6 +515,10 @@ pub(super) const MESSAGES: Messages = &[
         "A runtime may still be running and billing.",
     ),
     (
+        ERR_STOP_UNCONFIRMED,
+        "Stop requested; confirmation pending.",
+    ),
+    (
         ERR_MANIFEST_INVALID,
         "The plugin's description file isn't valid.",
     ),

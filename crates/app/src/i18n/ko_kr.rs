@@ -497,6 +497,10 @@ pub(super) const MESSAGES: Messages = &[
         "런타임이 아직 실행 중이며 과금되고 있을 수 있습니다.",
     ),
     (
+        ERR_STOP_UNCONFIRMED,
+        "중지를 요청했으며 확인 대기 중입니다.",
+    ),
+    (
         ERR_MANIFEST_INVALID,
         "플러그인의 설명 파일이 올바르지 않습니다.",
     ),

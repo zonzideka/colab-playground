@@ -88,6 +88,7 @@ pub fn kind_key(kind: ErrorKind) -> Option<&'static str> {
         K::Busy => keys::ERR_BUSY,
         K::ProvisionExhausted => keys::ERR_PROVISION_EXHAUSTED,
         K::OrphanSuspected => keys::ERR_ORPHAN_SUSPECTED,
+        K::StopUnconfirmed => keys::ERR_STOP_UNCONFIRMED,
         K::ManifestInvalid => keys::ERR_MANIFEST_INVALID,
         K::PluginExists => keys::ERR_PLUGIN_EXISTS,
         K::PluginNotFound => keys::ERR_PLUGIN_NOT_FOUND,

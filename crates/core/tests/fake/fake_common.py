@@ -46,6 +46,7 @@ DEFAULT_KNOBS = {
     "watchdog_start_fails": False,  # a started watchdog exits at once
     "keyring_locked": False,        # keyring reads fail
     "cli_api_broken": False,        # colab_cli.client cannot be imported
+    "list_assignments_fail_once": False,  # the next list_assignments raises (SSLError-like)
 }
 
 
@@ -149,6 +150,10 @@ def usage_of(s, name):
 
 
 # ---------------------------------------------------------------- fake modules
+
+
+class SSLError(Exception):
+    """Stands in for the transport error the real CLI raises on a broken link."""
 
 
 class _FakeKeyringBackend:
@@ -315,7 +320,12 @@ def install_fake_modules():
                 self.name = account_of_token({"token": session.creds.token})
 
             def list_assignments(self):
-                a = account_state(server(), self.name)
+                s = server()
+                if s["knobs"].get("list_assignments_fail_once"):
+                    s["knobs"]["list_assignments_fail_once"] = False
+                    save_server(s)
+                    raise SSLError("simulated connection error")
+                a = account_state(s, self.name)
                 return [_Assignment(ep, x) for ep, x in a["assignments"].items()]
 
             def unassign(self, endpoint):

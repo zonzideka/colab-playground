@@ -83,6 +83,10 @@ pub enum ErrorKind {
     /// A VM may have been left allocated and could not be verified as released.
     /// Param: `endpoint` (when known).
     OrphanSuspected,
+    /// A stop was requested and the runtime was released, but whether the
+    /// endpoint actually disappeared could not be confirmed. Param: `endpoint`
+    /// (when known).
+    StopUnconfirmed,
     /// A plugin manifest is invalid. Params: `field`, `reason`.
     ManifestInvalid,
     /// A plugin with this id is already installed. Param: `plugin`.
@@ -150,6 +154,7 @@ impl ErrorKind {
             ErrorKind::Busy => "busy",
             ErrorKind::ProvisionExhausted => "provision_exhausted",
             ErrorKind::OrphanSuspected => "orphan_suspected",
+            ErrorKind::StopUnconfirmed => "stop_unconfirmed",
             ErrorKind::ManifestInvalid => "manifest_invalid",
             ErrorKind::PluginExists => "plugin_exists",
             ErrorKind::PluginNotFound => "plugin_not_found",
@@ -194,6 +199,7 @@ impl ErrorKind {
             K::KeyringUnavailable => NextStep::UnlockKeyring,
             K::SessionLimitReached => NextStep::StopASession,
             K::OrphanSuspected => NextStep::ReviewRuntimes,
+            K::StopUnconfirmed => NextStep::Refresh,
             K::WslUnavailable => NextStep::InstallWsl,
             K::UnsupportedCliVersion => NextStep::UpdateApp,
             K::InstallFailed | K::PluginRunFailed => NextStep::ViewLog,

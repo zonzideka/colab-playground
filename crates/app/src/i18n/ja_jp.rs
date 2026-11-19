@@ -562,6 +562,7 @@ pub(super) const MESSAGES: Messages = &[
         ERR_ORPHAN_SUSPECTED,
         "ランタイムがまだ実行中で、課金が続いている可能性があります。",
     ),
+    (ERR_STOP_UNCONFIRMED, "停止を要求しました。確認待ちです。"),
     (ERR_MANIFEST_INVALID, "プラグインの説明ファイルが無効です。"),
     (
         ERR_PLUGIN_EXISTS,
