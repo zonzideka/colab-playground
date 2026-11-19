@@ -71,7 +71,9 @@ def load_state(path):
 
 
 def save_state(path, records):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # Like the real CLI, whose lock file open fails when the state file's
+    # directory does not exist: do not create the directory here. The app
+    # must create it before invoking the CLI.
     with open(path, "w") as fh:
         json.dump(records, fh, indent=2)
 

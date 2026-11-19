@@ -1358,3 +1358,19 @@ fn worker_quant_fitting_matches_the_rust_vectors() {
     assert!(out.success(), "{}\n{}", out.stdout, out.stderr);
     assert!(!out.stdout.contains("FAIL"), "{}", out.stdout);
 }
+
+#[test]
+fn first_session_start_creates_the_account_state_directory() {
+    let f = fixture();
+    let alice = f.adopt_alice();
+    // The reported state of a brand-new account: the account is known, but
+    // its host-side directory does not exist yet. The CLI writes its state
+    // file and lock inside it without creating it, so the first session
+    // start failed with FileNotFoundError until the directory was made by
+    // hand. The backend must create it on the way to the CLI.
+    let dir = f.state_file(&alice.id).parent().unwrap().to_path_buf();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!dir.exists());
+    f.provision("alice-first", Accelerator::None);
+    assert!(dir.is_dir(), "account state directory was not created");
+}
