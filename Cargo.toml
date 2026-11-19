@@ -10,7 +10,7 @@ authors = ["ScarletKc"]
 license = "MIT"
 # The one project description; the README and the GitHub repo use the same sentence.
 description = "A desktop app for the Google Colab CLI: accounts, GPU sessions with cost guards, port forwarding and plugins."
-repository = "https://github.com/scarletkc/colab-playground"
+repository = "https://github.com/zonzideka/colab-playground"
 publish = false
 
 [workspace.lints.rust]

@@ -38,7 +38,7 @@ fn main() {
         // Task Manager shows FileDescription as the program's name.
         .set("FileDescription", "Colab Playground")
         .set("ProductName", "Colab Playground")
-        .set("CompanyName", "ScarletKc")
+        .set("CompanyName", "zonzideka")
         .set("LegalCopyright", &copyright)
         .set("FileVersion", &version)
         .set("ProductVersion", &version)
