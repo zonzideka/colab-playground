@@ -47,6 +47,7 @@ DEFAULT_KNOBS = {
     "keyring_locked": False,        # keyring reads fail
     "cli_api_broken": False,        # colab_cli.client cannot be imported
     "list_assignments_fail_once": False,  # the next list_assignments raises (SSLError-like)
+    "skip_state_write": False,      # `colab new` allocates but does not write the state file
 }
 
 

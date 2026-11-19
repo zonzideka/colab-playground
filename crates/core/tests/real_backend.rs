@@ -1112,6 +1112,126 @@ fn a_stop_whose_confirmation_listing_fails_is_finalised_as_user_stopped() {
 }
 
 #[test]
+fn provision_records_the_endpoint_from_the_confirmed_session() {
+    let f = fixture();
+    f.adopt_alice();
+    let out = f.provision("confirmed", Accelerator::T4);
+
+    let assignments = f.assignments("alice");
+    let endpoint = assignments.keys().next().unwrap().clone();
+    assert!(!out.endpoint.is_empty());
+    assert_eq!(out.endpoint, endpoint);
+
+    let ledger = Ledger::load(&f.cfg.local_dir.join("ledger.json")).unwrap();
+    let entry = ledger
+        .entries()
+        .iter()
+        .find(|e| e.name == "confirmed")
+        .unwrap();
+    assert_eq!(entry.endpoint.as_deref(), Some(endpoint.as_str()));
+}
+
+#[test]
+fn a_session_missing_from_the_state_file_cannot_be_provisioned() {
+    // `kept_endpoint` confirms an unnamed session by diffing the assignments
+    // listing, but the provision flow cannot reach it for such a session:
+    // `colab exec` probes and starts the watchdog by name, which needs the
+    // state-file record. A session whose state-file write was skipped fails
+    // at the probe, not at the endpoint confirmation.
+    let f = fixture();
+    f.adopt_alice();
+    f.knob("skip_state_write", json!(true));
+    let mut spec = ProvisionSpec::new("no-state", Accelerator::T4, &Defaults::default());
+    spec.max_attempts = 1;
+    let (tx, _rx) = channel();
+    let err = f.b.provision(spec, tx, &nc()).unwrap_err();
+    assert!(err.is(ErrorKind::SessionGone), "{err}");
+}
+
+#[test]
+fn a_stop_with_an_unknown_name_marks_the_ledger_entry_by_endpoint() {
+    let f = fixture();
+    let account = f.adopt_alice();
+    f.provision("by-endpoint", Accelerator::T4);
+
+    // Neither the target name nor the state file can name the runtime: only
+    // the ledger entry's endpoint can.
+    let endpoint = f.assignments("alice").keys().next().unwrap().clone();
+    std::fs::remove_file(f.state_file(&account.id)).unwrap();
+    let target = RuntimeRef {
+        account: account.id.clone(),
+        endpoint,
+        name: None,
+    };
+    f.b.stop_session(&target, StopOptions::default(), &nc())
+        .unwrap();
+
+    let ledger = Ledger::load(&f.cfg.local_dir.join("ledger.json")).unwrap();
+    let entry = ledger
+        .entries()
+        .iter()
+        .find(|e| e.name == "by-endpoint")
+        .unwrap();
+    assert!(matches!(
+        entry.stopped,
+        Some(StopRecord {
+            reason: StopReason::User,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_stop_resolves_the_name_from_the_state_file_and_records_user() {
+    let mut f = fixture();
+    let account = f.adopt_alice();
+    f.provision("state-name", Accelerator::T4);
+
+    // Null the ledger endpoint so only the state file can name the runtime by
+    // its endpoint, then reload the backend.
+    let ledger_file = f.cfg.local_dir.join("ledger.json");
+    let mut ledger: Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger_file).unwrap()).unwrap();
+    ledger[0]["endpoint"] = Value::Null;
+    std::fs::write(&ledger_file, ledger.to_string()).unwrap();
+    f.b = RealBackend::new(f.cfg.clone()).unwrap();
+
+    let endpoint = f.assignments("alice").keys().next().unwrap().clone();
+    let target = RuntimeRef {
+        account: account.id.clone(),
+        endpoint,
+        name: None,
+    };
+    f.b.stop_session(&target, StopOptions::default(), &nc())
+        .unwrap();
+
+    let stopped_via_cli = f.calls().iter().any(|c| {
+        c["argv"]
+            .as_array()
+            .is_some_and(|a| a.contains(&json!("stop")))
+    });
+    assert!(
+        stopped_via_cli,
+        "the state-file name was used to stop via the CLI"
+    );
+    assert!(f.assignments("alice").is_empty());
+
+    let ledger = Ledger::load(&ledger_file).unwrap();
+    let entry = ledger
+        .entries()
+        .iter()
+        .find(|e| e.name == "state-name")
+        .unwrap();
+    assert!(matches!(
+        entry.stopped,
+        Some(StopRecord {
+            reason: StopReason::User,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn keyring_and_cli_api_failures_are_typed() {
     let f = fixture();
     f.adopt_alice();
