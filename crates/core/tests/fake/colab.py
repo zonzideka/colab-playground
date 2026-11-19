@@ -172,11 +172,12 @@ def cmd_new(state_path, args):
         return 1
     ep = allocate(s, name, session, acc, "--high-mem" in args)
     fc.save_server(s)
-    records = load_state(state_path)
-    records[session] = {"name": session, "token": "proxy-token", "url": "https://proxy.invalid", "endpoint": ep,
-                        "token_expires_at": "2999-01-01T00:00:00Z", "accelerator": acc, "variant": "GPU",
-                        "machine_shape": "STANDARD"}
-    save_state(state_path, records)
+    if not fc.knob("skip_state_write"):
+        records = load_state(state_path)
+        records[session] = {"name": session, "token": "proxy-token", "url": "https://proxy.invalid", "endpoint": ep,
+                            "token_expires_at": "2999-01-01T00:00:00Z", "accelerator": acc, "variant": "GPU",
+                            "machine_shape": "STANDARD"}
+        save_state(state_path, records)
     out("[colab] Session READY.")
     return 0
 

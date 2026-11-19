@@ -774,6 +774,22 @@ impl Inner {
         });
     }
 
+    /// The name of an unstopped ledger entry on `account` whose endpoint is
+    /// `endpoint` (newest first), or `None` when none exists.
+    fn ledger_name_by_endpoint(&self, account: &AccountId, endpoint: &str) -> Option<String> {
+        self.st()
+            .ledger
+            .entries()
+            .iter()
+            .rev()
+            .find(|e| {
+                &e.account == account
+                    && e.endpoint.as_deref() == Some(endpoint)
+                    && e.stopped.is_none()
+            })
+            .map(|e| e.name.clone())
+    }
+
     /// Names recorded in an account's state file, by endpoint.
     fn state_names(
         &self,
@@ -972,19 +988,16 @@ impl Inner {
 
     fn stop(&self, target: &RuntimeRef, opts: &StopOptions, cancel: &CancelToken) -> Result<()> {
         let nc = CancelToken::new();
-        let name = target.name.clone().or_else(|| {
-            self.st()
-                .ledger
-                .entries()
-                .iter()
-                .rev()
-                .find(|e| {
-                    e.account == target.account
-                        && e.endpoint.as_deref() == Some(&target.endpoint)
-                        && e.stopped.is_none()
-                })
-                .map(|e| e.name.clone())
-        });
+        let name = target
+            .name
+            .clone()
+            .or_else(|| {
+                // Parity with `runtimes()`: the state file maps endpoints to the
+                // names the CLI recorded for them.
+                self.state_names(&target.account, &nc)
+                    .and_then(|names| names.get(&target.endpoint).cloned())
+            })
+            .or_else(|| self.ledger_name_by_endpoint(&target.account, &target.endpoint));
         if let Some(n) = &name {
             self.tunnels.close_session(&target.account, n);
         }
@@ -1040,7 +1053,14 @@ impl Inner {
                 );
             }
         }
-        if let Some(n) = &name {
+        // A verified-gone release must not leave the record live: if the name
+        // could not be resolved, mark whatever unstopped entry owns the
+        // endpoint. Only an unmanaged runtime (no matching entry) is returned
+        // as stopped with nothing recorded.
+        let mark_name = name
+            .clone()
+            .or_else(|| self.ledger_name_by_endpoint(&target.account, &target.endpoint));
+        if let Some(n) = &mark_name {
             self.mark_stopped(&target.account, n, opts.reason.clone());
         }
         Ok(())
@@ -1714,13 +1734,18 @@ impl Backend for RealBackend {
                 let _ = events.send(e);
             },
         )?;
-        let endpoint = self
-            .inner
-            .state_names(&account, &CancelToken::new())
-            .unwrap_or_default()
-            .into_iter()
-            .find(|(_, n)| n == &outcome.name)
-            .map(|(e, _)| e);
+        let endpoint = if outcome.endpoint.is_empty() {
+            // The kept session's endpoint could not be confirmed during
+            // provisioning; fall back to the state file's name mapping.
+            self.inner
+                .state_names(&account, &CancelToken::new())
+                .unwrap_or_default()
+                .into_iter()
+                .find(|(_, n)| n == &outcome.name)
+                .map(|(e, _)| e)
+        } else {
+            Some(outcome.endpoint.clone())
+        };
         self.inner.st().ledger.upsert(TrackedSession {
             name: outcome.name.clone(),
             account,

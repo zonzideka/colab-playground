@@ -206,6 +206,9 @@ pub enum ProvisionEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProvisionOutcome {
     pub name: String,
+    /// Server endpoint of the kept runtime, confirmed from the assignments
+    /// listing (empty when it could not be confirmed).
+    pub endpoint: String,
     pub hardware: Hardware,
     pub attempts: u32,
     /// Kept although below spec.
@@ -305,6 +308,29 @@ pub fn release(ops: &dyn ProvisionOps, name: &str) -> Result<()> {
                 .map(|e| e.to_string())
                 .unwrap_or_else(|| "still listed after stop".into()),
         ))
+}
+
+/// The endpoint of the kept session: the assignment that appeared since
+/// `before`, preferring one named `name`. The listing reports an assignment
+/// whose state-file record is missing as `[?]` (unnamed), so the name is a
+/// hint, not a requirement — the diff alone confirms which endpoint the just
+/// answered `colab new` allocated.
+fn kept_endpoint(ops: &dyn ProvisionOps, name: &str, before: &BTreeSet<String>) -> String {
+    let nc = CancelToken::new();
+    let Ok(list) = ops.sessions(&nc) else {
+        return String::new();
+    };
+    let created: Vec<&ServerSession> = list
+        .iter()
+        .filter(|s| !before.contains(&s.endpoint))
+        .collect();
+    created
+        .iter()
+        .find(|s| s.name.as_deref() == Some(name))
+        .copied()
+        .or_else(|| (created.len() == 1).then_some(created[0]))
+        .map(|s| s.endpoint.clone())
+        .unwrap_or_default()
 }
 
 /// Cleans up after a failed `colab new`: stops a VM recorded under `name` and
@@ -547,6 +573,7 @@ fn run(
             release(ops, name)?;
             return Err(Error::cancelled());
         }
+        let endpoint = kept_endpoint(ops, name, &before);
         events(ProvisionEvent::Ready {
             name: name.to_owned(),
             gpu: hardware.gpu.clone(),
@@ -555,6 +582,7 @@ fn run(
         });
         return Ok(ProvisionOutcome {
             name: name.to_owned(),
+            endpoint,
             hardware,
             attempts: attempt,
             below_spec,
@@ -1039,5 +1067,28 @@ mod tests {
         assert!(s.validate().is_err());
         s.max_attempts = 99;
         assert_eq!(s.attempts(), MAX_ATTEMPTS_CAP);
+    }
+
+    #[test]
+    fn kept_endpoint_confirms_an_unnamed_session_by_endpoint_diff() {
+        // The kept session may be missing from the state file, so `sessions()`
+        // lists it as `[?]`; the endpoint that appeared since `before` is
+        // still the one this attempt allocated.
+        let f = Fake::default();
+        f.live.borrow_mut().push(sess(None, "new-endpoint"));
+        assert_eq!(kept_endpoint(&f, "llm", &BTreeSet::new()), "new-endpoint");
+
+        // A named new endpoint is preferred over an unnamed one.
+        f.live.borrow_mut().clear();
+        f.live.borrow_mut().push(sess(None, "other"));
+        f.live.borrow_mut().push(sess(Some("llm"), "mine"));
+        assert_eq!(kept_endpoint(&f, "llm", &BTreeSet::new()), "mine");
+
+        // Pre-existing endpoints are not the kept session.
+        let before = BTreeSet::from(["old-endpoint".to_owned()]);
+        f.live.borrow_mut().clear();
+        f.live.borrow_mut().push(sess(None, "old-endpoint"));
+        f.live.borrow_mut().push(sess(None, "new-endpoint"));
+        assert_eq!(kept_endpoint(&f, "llm", &before), "new-endpoint");
     }
 }
