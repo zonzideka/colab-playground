@@ -1079,7 +1079,7 @@ dependencies = [
 
 [[package]]
 name = "colab-playground"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "colab-playground-core",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "colab-playground-core"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "dirs 6.0.0",
