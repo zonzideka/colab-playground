@@ -1288,6 +1288,7 @@ fn daemon_stub(root: &Path, body: &str) -> PathBuf {
 
 /// PATH where the daemon stub runs the fake's marker write, like a daemon
 /// that comes up: the fake keyring works from then on.
+#[cfg(target_os = "linux")]
 fn path_with_working_daemon(root: &Path) -> Vec<(String, String)> {
     // Only shell builtins in the stub: the PATH it runs under is the
     // restricted one being tested, so an external `touch` would not resolve.
@@ -1301,6 +1302,9 @@ fn path_with_working_daemon(root: &Path) -> Vec<(String, String)> {
     )]
 }
 
+// The daemon autostart only exists on Linux (the helper refuses to start anything
+// elsewhere), so the recovery and not-installed behaviours are Linux-only to test.
+#[cfg(target_os = "linux")]
 #[test]
 fn keyring_service_down_recovers_once_the_daemon_starts() {
     let f = fixture_with_env(path_with_working_daemon);
@@ -1309,6 +1313,7 @@ fn keyring_service_down_recovers_once_the_daemon_starts() {
     assert_eq!(v.active_email.as_deref(), Some("alice@example.com"));
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn keyring_fail_backend_recovers_once_the_daemon_starts() {
     let f = fixture_with_env(path_with_working_daemon);
@@ -1317,6 +1322,7 @@ fn keyring_fail_backend_recovers_once_the_daemon_starts() {
     assert_eq!(v.active_email.as_deref(), Some("alice@example.com"));
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn keyring_writes_and_deletes_retry_after_the_daemon_starts() {
     let f = fixture_with_env(path_with_working_daemon);
@@ -1333,6 +1339,7 @@ fn keyring_writes_and_deletes_retry_after_the_daemon_starts() {
     assert!(!helper.secret_has("hf_token", &nc()).unwrap());
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn keyring_daemon_missing_is_reported_as_not_installed() {
     for knob in ["keyring_service_down", "keyring_no_backend"] {
