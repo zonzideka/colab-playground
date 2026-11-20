@@ -75,6 +75,7 @@ pub fn kind_key(kind: ErrorKind) -> Option<&'static str> {
         K::AccountNotActive => keys::ERR_ACCOUNT_NOT_ACTIVE,
         K::AccountNotFound => keys::ERR_ACCOUNT_NOT_FOUND,
         K::KeyringUnavailable => keys::ERR_KEYRING_UNAVAILABLE,
+        K::KeyringNotInstalled => keys::ERR_KEYRING_NOT_INSTALLED,
         K::AddInProgress => keys::ERR_ADD_IN_PROGRESS,
         K::LegacyTokenPresent => keys::ERR_LEGACY_TOKEN,
         K::LoginCancelled => keys::ERR_LOGIN_CANCELLED,

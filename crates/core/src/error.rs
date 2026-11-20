@@ -52,6 +52,10 @@ pub enum ErrorKind {
     AccountNotFound,
     /// The OS keyring backend is missing or locked.
     KeyringUnavailable,
+    /// Linux has no Secret Service provider installed
+    /// (`gnome-keyring-daemon` is missing), so there is no keyring to
+    /// unlock; installing the provider is the fix.
+    KeyringNotInstalled,
     /// A previous add-account flow was interrupted; roll it back first.
     AddInProgress,
     /// The CLI still has a legacy plaintext token file; it would be migrated
@@ -141,6 +145,7 @@ impl ErrorKind {
             ErrorKind::AccountNotActive => "account_not_active",
             ErrorKind::AccountNotFound => "account_not_found",
             ErrorKind::KeyringUnavailable => "keyring_unavailable",
+            ErrorKind::KeyringNotInstalled => "keyring_not_installed",
             ErrorKind::AddInProgress => "add_in_progress",
             ErrorKind::LegacyTokenPresent => "legacy_token_present",
             ErrorKind::LoginCancelled => "login_cancelled",
@@ -191,7 +196,9 @@ impl ErrorKind {
             | K::Timeout
             | K::RateLimited => NextStep::RetryLater,
             K::SshBusy => NextStep::CloseOtherConnection,
-            K::SessionGone | K::AccountNotFound | K::PluginNotFound => NextStep::Refresh,
+            K::SessionGone | K::AccountNotFound | K::PluginNotFound | K::KeyringNotInstalled => {
+                NextStep::Refresh
+            }
             K::PortInUse | K::PortReserved => NextStep::ChooseOtherPort,
             K::InvalidInput | K::ManifestInvalid => NextStep::CheckInput,
             K::NoActiveAccount | K::ActiveAccountNotAdopted => NextStep::AddAccount,

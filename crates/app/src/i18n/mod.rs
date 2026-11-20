@@ -303,6 +303,7 @@ catalog_keys! {
     ERR_ACCOUNT_NOT_ACTIVE => "app.err.account_not_active",
     ERR_ACCOUNT_NOT_FOUND => "app.err.account_not_found",
     ERR_KEYRING_UNAVAILABLE => "app.err.keyring_unavailable",
+    ERR_KEYRING_NOT_INSTALLED => "app.err.keyring_not_installed",
     ERR_ADD_IN_PROGRESS => "app.err.add_in_progress",
     ERR_LEGACY_TOKEN => "app.err.legacy_token",
     ERR_LOGIN_CANCELLED => "app.err.login_cancelled",

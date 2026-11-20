@@ -523,7 +523,11 @@ pub(super) const MESSAGES: Messages = &[
     ),
     (
         ERR_KEYRING_UNAVAILABLE,
-        "システムのキーリングにアクセスできません。",
+        "システムのキーリングにアクセスできません。キーリングサービスの起動はアプリがすでに試行しました。Linux でパスワードの入力を求められた場合は、ログインキーリングのロックを解除してから再確認してください。",
+    ),
+    (
+        ERR_KEYRING_NOT_INSTALLED,
+        "キーリングサービスがインストールされていません。Ubuntu/Debian では次のコマンドでインストールし、アプリを再起動してください: sudo apt install gnome-keyring",
     ),
     (ERR_ADD_IN_PROGRESS, "別のログインがまだ進行中です。"),
     (

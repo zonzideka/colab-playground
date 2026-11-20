@@ -62,6 +62,13 @@ fn install(src: &Path, dst: &Path, exec: bool) {
 }
 
 fn fixture() -> Fixture {
+    fixture_with_env(|_| Vec::new())
+}
+
+/// `setup` runs once the temp root exists and returns extra environment
+/// pairs for every spawned process (a later pair wins over an earlier one
+/// with the same name, so tests can replace `PATH`).
+fn fixture_with_env(setup: impl FnOnce(&Path) -> Vec<(String, String)>) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
     let fake = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -92,6 +99,13 @@ fn fixture() -> Fixture {
     });
     std::fs::write(state.join("server.json"), server.to_string()).unwrap();
     let s = |p: &Path| p.to_string_lossy().into_owned();
+    let mut base_env = vec![
+        ("HOME".into(), s(&home)),
+        ("CPG_FAKE_STATE".into(), s(&state)),
+        ("CPG_SSH".into(), s(&bin.join("ssh"))),
+        ("PYTHONDONTWRITEBYTECODE".into(), "1".into()),
+    ];
+    base_env.extend(setup(&root));
     let cfg = RealConfig {
         host: Host::Local,
         toolchain: Some(Toolchain {
@@ -100,12 +114,7 @@ fn fixture() -> Fixture {
         }),
         local_dir: root.join("local"),
         host_dir: Some(HostPath::new(s(&root.join("hostdata")))),
-        base_env: vec![
-            ("HOME".into(), s(&home)),
-            ("CPG_FAKE_STATE".into(), s(&state)),
-            ("CPG_SSH".into(), s(&bin.join("ssh"))),
-            ("PYTHONDONTWRITEBYTECODE".into(), "1".into()),
-        ],
+        base_env,
         clock: Arc::new(ManualClock::fixed()),
         http: Arc::new(NoHttp),
         defaults: Defaults::default(),
@@ -1240,6 +1249,117 @@ fn keyring_and_cli_api_failures_are_typed() {
     assert!(rt.errors[0].error.is(ErrorKind::UnsupportedCliVersion));
     f.knob("cli_api_broken", json!(false));
     f.knob("keyring_locked", json!(true));
+    assert!(
+        f.b.accounts(&nc())
+            .unwrap_err()
+            .is(ErrorKind::KeyringUnavailable)
+    );
+}
+
+/// A directory holding only the links the harness itself resolves by name
+/// (`python3` for the fake interpreter's shebang, `bash` for the local
+/// script runner, and the few external commands its wrapper scripts call):
+/// a PATH built from it (plus stub dirs) still runs the toolchain, but
+/// never resolves a system `gnome-keyring-daemon`, wherever the suite runs.
+fn clean_bin(root: &Path) -> PathBuf {
+    let dir = root.join("cleanbin");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = std::env::var("PATH").unwrap_or_default();
+    for name in ["python3", "bash", "base64", "sleep", "tr"] {
+        let found = path
+            .split(':')
+            .map(|d| Path::new(d).join(name))
+            .find(|p| p.exists())
+            .unwrap_or_else(|| panic!("{name} on PATH (the fake toolchain needs it)"));
+        std::os::unix::fs::symlink(found, dir.join(name)).unwrap();
+    }
+    dir
+}
+
+/// A stub `gnome-keyring-daemon` in its own directory; `body` is the script.
+fn daemon_stub(root: &Path, body: &str) -> PathBuf {
+    let dir = root.join("stubbin");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("gnome-keyring-daemon");
+    std::fs::write(&path, body).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    dir
+}
+
+/// PATH where the daemon stub runs the fake's marker write, like a daemon
+/// that comes up: the fake keyring works from then on.
+fn path_with_working_daemon(root: &Path) -> Vec<(String, String)> {
+    // Only shell builtins in the stub: the PATH it runs under is the
+    // restricted one being tested, so an external `touch` would not resolve.
+    let stub = daemon_stub(
+        root,
+        "#!/bin/sh\n: > \"$CPG_FAKE_STATE/keyring_daemon_started\"\n",
+    );
+    vec![(
+        "PATH".into(),
+        format!("{}:{}", stub.display(), clean_bin(root).display()),
+    )]
+}
+
+#[test]
+fn keyring_service_down_recovers_once_the_daemon_starts() {
+    let f = fixture_with_env(path_with_working_daemon);
+    f.knob("keyring_service_down", json!(true));
+    let v = f.b.accounts(&nc()).unwrap();
+    assert_eq!(v.active_email.as_deref(), Some("alice@example.com"));
+}
+
+#[test]
+fn keyring_fail_backend_recovers_once_the_daemon_starts() {
+    let f = fixture_with_env(path_with_working_daemon);
+    f.knob("keyring_no_backend", json!(true));
+    let v = f.b.accounts(&nc()).unwrap();
+    assert_eq!(v.active_email.as_deref(), Some("alice@example.com"));
+}
+
+#[test]
+fn keyring_writes_and_deletes_retry_after_the_daemon_starts() {
+    let f = fixture_with_env(path_with_working_daemon);
+    f.knob("keyring_service_down", json!(true));
+    let helper = f.helper();
+    helper.secret_set("hf_token", "s3cret", &nc()).unwrap();
+    assert_eq!(
+        helper.secret_get("hf_token", &nc()).unwrap().as_deref(),
+        Some("s3cret")
+    );
+    // The daemon "dies" again; the delete must restart it and still land.
+    std::fs::remove_file(f.state.join("keyring_daemon_started")).unwrap();
+    helper.secret_delete("hf_token", &nc()).unwrap();
+    assert!(!helper.secret_has("hf_token", &nc()).unwrap());
+}
+
+#[test]
+fn keyring_daemon_missing_is_reported_as_not_installed() {
+    for knob in ["keyring_service_down", "keyring_no_backend"] {
+        let f =
+            fixture_with_env(|root| vec![("PATH".into(), clean_bin(root).display().to_string())]);
+        f.knob(knob, json!(true));
+        assert!(
+            f.b.accounts(&nc())
+                .unwrap_err()
+                .is(ErrorKind::KeyringNotInstalled),
+            "{knob}"
+        );
+    }
+}
+
+#[test]
+fn keyring_daemon_that_does_not_help_stays_unavailable() {
+    // The binary exists and runs, but the service never comes up (the user
+    // dismissed the unlock prompt, say): the plain unavailable error stays.
+    let f = fixture_with_env(|root| {
+        let stub = daemon_stub(root, "#!/bin/sh\nexit 0\n");
+        vec![(
+            "PATH".into(),
+            format!("{}:{}", stub.display(), clean_bin(root).display()),
+        )]
+    });
+    f.knob("keyring_service_down", json!(true));
     assert!(
         f.b.accounts(&nc())
             .unwrap_err()

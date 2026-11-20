@@ -395,7 +395,14 @@ pub(super) const MESSAGES: Messages = &[
     ),
     (ERR_ACCOUNT_NOT_ACTIVE, "该账号不是当前账号。"),
     (ERR_ACCOUNT_NOT_FOUND, "该账号已不在已保存的列表中。"),
-    (ERR_KEYRING_UNAVAILABLE, "无法访问系统密钥环。"),
+    (
+        ERR_KEYRING_UNAVAILABLE,
+        "无法访问系统密钥环。应用已尝试自动启动密钥环服务；Linux 上如出现密码提示，请解锁登录密钥环后重新检查。",
+    ),
+    (
+        ERR_KEYRING_NOT_INSTALLED,
+        "系统未安装密钥环服务。在 Ubuntu/Debian 上运行这条命令安装，然后重启应用：sudo apt install gnome-keyring",
+    ),
     (ERR_ADD_IN_PROGRESS, "另一次登录仍在进行中。"),
     (
         ERR_LEGACY_TOKEN,

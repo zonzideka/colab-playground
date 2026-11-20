@@ -70,6 +70,93 @@ def emit(obj):
 
 # ---------------------------------------------------------------- keyring
 
+_daemon_start_attempted = False
+_daemon_start_outcome = None
+
+
+def _try_start_keyring_daemon():
+    """Starts the Secret Service daemon once per process, best effort.
+
+    Returns "started" (the binary was found and run), "not_installed"
+    (Linux without gnome-keyring-daemon on PATH) or "unavailable" (not
+    Linux). Never raises: a failed start must not mask the keyring error
+    that prompted it. The daemon keeps running in the user's session
+    afterwards, so later helper processes find the service up.
+    """
+    global _daemon_start_attempted, _daemon_start_outcome
+    if _daemon_start_attempted:
+        return _daemon_start_outcome
+    _daemon_start_attempted = True
+    _daemon_start_outcome = "unavailable"
+    if not sys.platform.startswith("linux"):
+        return _daemon_start_outcome
+    try:
+        import shutil  # noqa: PLC0415
+        import subprocess  # noqa: PLC0415
+
+        path = shutil.which("gnome-keyring-daemon")
+        if path is None:
+            _daemon_start_outcome = "not_installed"
+            return _daemon_start_outcome
+        _daemon_start_outcome = "started"
+        try:
+            subprocess.run(
+                [path, "--start", "--components=secrets"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    except Exception:  # noqa: BLE001
+        pass
+    return _daemon_start_outcome
+
+
+def _is_service_unavailable(exc):
+    """True when a keyring call failed because the Secret Service is down.
+
+    Matched on exception type names and modules of the secretstorage/dbus
+    stack only, so an unrelated failure (a locked keyring, a rejected
+    value) never triggers the daemon start or a retry.
+    """
+    if type(exc).__name__ in ("SecretServiceNotAvailableException", "DBusException"):
+        return True
+    module = type(exc).__module__ or ""
+    return module.startswith("secretstorage") or module.startswith("dbus")
+
+
+def _unavailable_fail(action, exc, outcome):
+    """The Fail for a keyring operation that did not succeed.
+
+    A missing daemon binary is its own kind so the app can show the
+    install command instead of unlock guidance that cannot help there.
+    """
+    if outcome == "not_installed":
+        return Fail("keyring_not_installed", "gnome-keyring-daemon not installed")
+    return Fail("keyring_unavailable", "keyring %s failed (%s)" % (action, type(exc).__name__))
+
+
+def _backend_is_fail(keyring):
+    backend = keyring.get_keyring()
+    module = type(backend).__module__ or ""
+    return module.endswith(".fail") or type(backend).__name__ == "FailKeyring"
+
+
+def _reresolve_backend(keyring):
+    # keyring caches the backend it first resolved for the whole process,
+    # so without clearing the cache a daemon started now could only ever
+    # help the next helper process. The attribute is private; if it is not
+    # there, re-resolution returns the cached backend and the start still
+    # pays off on the next run.
+    try:
+        from keyring import core as keyring_core  # noqa: PLC0415
+
+        keyring_core._keyring_backend = None
+    except Exception:  # noqa: BLE001
+        pass
+
 
 def _keyring():
     try:
@@ -77,12 +164,23 @@ def _keyring():
     except Exception as exc:  # noqa: BLE001
         raise Fail("keyring_unavailable", "import keyring failed (%s)" % type(exc).__name__)
     try:
-        backend = keyring.get_keyring()
+        fail = _backend_is_fail(keyring)
     except Exception as exc:  # noqa: BLE001
         raise Fail("keyring_unavailable", "no keyring backend (%s)" % type(exc).__name__)
-    module = type(backend).__module__ or ""
-    if module.endswith(".fail") or type(backend).__name__ == "FailKeyring":
-        raise Fail("keyring_unavailable", "no usable keyring backend")
+    if fail:
+        # On headless Linux the usual cause is a Secret Service daemon
+        # that was never started, which leaves keyring with only its fail
+        # backend; starting the daemon can give it a real one.
+        outcome = _try_start_keyring_daemon()
+        _reresolve_backend(keyring)
+        try:
+            fail = _backend_is_fail(keyring)
+        except Exception:  # noqa: BLE001
+            fail = True
+        if fail:
+            if outcome == "not_installed":
+                raise Fail("keyring_not_installed", "gnome-keyring-daemon not installed")
+            raise Fail("keyring_unavailable", "no usable keyring backend")
     return keyring
 
 
@@ -97,43 +195,75 @@ def _delete_error_types(keyring):
 
 def kr_get(service, user):
     keyring = _keyring()
-    result = []
-    errors = []
 
-    def run():
-        try:
-            result.append(keyring.get_password(service, user))
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
+    def attempt():
+        result = []
+        errors = []
 
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
-    thread.join(READ_TIMEOUT_S)
-    if thread.is_alive():
-        raise Fail("keyring_unavailable", "keyring read timed out (locked?)")
-    if errors:
-        raise Fail("keyring_unavailable", "keyring read failed (%s)" % type(errors[0]).__name__)
-    return result[0]
+        def run():
+            try:
+                result.append(keyring.get_password(service, user))
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        thread.join(READ_TIMEOUT_S)
+        if thread.is_alive():
+            raise Fail("keyring_unavailable", "keyring read timed out (locked?)")
+        return (result[0] if result else None), (errors[0] if errors else None)
+
+    value, error = attempt()
+    if error is not None and _is_service_unavailable(error):
+        # The read itself is threaded because a locked keyring can block
+        # forever; a service that is simply not running fails fast, and one
+        # daemon start plus a single retry is enough to outlive it.
+        outcome = _try_start_keyring_daemon()
+        value, error = attempt()
+        if error is not None:
+            raise _unavailable_fail("read", error, outcome)
+    if error is not None:
+        raise Fail("keyring_unavailable", "keyring read failed (%s)" % type(error).__name__)
+    return value
 
 
 def kr_set(service, user, value):
     # Mutations are synchronous: a timed-out write could land after a rollback.
+    # Retrying after a raise is safe for the same reason: the first attempt
+    # raised before anything landed, so the value is still written at most once.
     keyring = _keyring()
     try:
         keyring.set_password(service, user, value)
     except Exception as exc:  # noqa: BLE001
-        raise Fail("keyring_unavailable", "keyring write failed (%s)" % type(exc).__name__)
+        if not _is_service_unavailable(exc):
+            raise Fail("keyring_unavailable", "keyring write failed (%s)" % type(exc).__name__)
+        outcome = _try_start_keyring_daemon()
+        try:
+            keyring.set_password(service, user, value)
+        except Exception as exc2:  # noqa: BLE001
+            raise _unavailable_fail("write", exc2, outcome)
 
 
 def kr_delete(service, user):
     keyring = _keyring()
     ignorable = _delete_error_types(keyring)
+
+    def attempt():
+        try:
+            keyring.delete_password(service, user)
+        except ignorable:
+            pass
+
     try:
-        keyring.delete_password(service, user)
-    except ignorable:
-        pass
+        attempt()
     except Exception as exc:  # noqa: BLE001
-        raise Fail("keyring_unavailable", "keyring delete failed (%s)" % type(exc).__name__)
+        if not _is_service_unavailable(exc):
+            raise Fail("keyring_unavailable", "keyring delete failed (%s)" % type(exc).__name__)
+        outcome = _try_start_keyring_daemon()
+        try:
+            attempt()
+        except Exception as exc2:  # noqa: BLE001
+            raise _unavailable_fail("delete", exc2, outcome)
 
 
 def kr_set_verified(service, user, value):

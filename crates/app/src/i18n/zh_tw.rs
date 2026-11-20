@@ -403,7 +403,14 @@ pub(super) const MESSAGES: Messages = &[
     ),
     (ERR_ACCOUNT_NOT_ACTIVE, "該帳號不是目前帳號。"),
     (ERR_ACCOUNT_NOT_FOUND, "該帳號已不在已儲存的清單中。"),
-    (ERR_KEYRING_UNAVAILABLE, "無法存取系統金鑰圈。"),
+    (
+        ERR_KEYRING_UNAVAILABLE,
+        "無法存取系統金鑰圈。應用程式已嘗試自動啟動金鑰圈服務；Linux 上如出現密碼提示，請解鎖登入金鑰圈後重新檢查。",
+    ),
+    (
+        ERR_KEYRING_NOT_INSTALLED,
+        "系統未安裝金鑰圈服務。在 Ubuntu/Debian 上執行這條命令安裝，然後重新啟動應用程式：sudo apt install gnome-keyring",
+    ),
     (ERR_ADD_IN_PROGRESS, "另一次登入仍在進行中。"),
     (
         ERR_LEGACY_TOKEN,

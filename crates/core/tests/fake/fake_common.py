@@ -45,6 +45,8 @@ DEFAULT_KNOBS = {
     "ssh_busy": False,              # proxy-mode answers HTTP 429
     "watchdog_start_fails": False,  # a started watchdog exits at once
     "keyring_locked": False,        # keyring reads fail
+    "keyring_service_down": False,  # keyring ops fail as if the Secret Service were down
+    "keyring_no_backend": False,    # keyring resolves only its fail backend
     "cli_api_broken": False,        # colab_cli.client cannot be imported
     "list_assignments_fail_once": False,  # the next list_assignments raises (SSLError-like)
     "skip_state_write": False,      # `colab new` allocates but does not write the state file
@@ -157,8 +159,27 @@ class SSLError(Exception):
     """Stands in for the transport error the real CLI raises on a broken link."""
 
 
+class SecretServiceNotAvailableException(Exception):
+    """Stands in for secretstorage's error when no Secret Service answers.
+
+    The class name is the contract: the account helper recognises the real
+    exception by name, so the fake must carry the same one."""
+
+
+def daemon_started():
+    """True once the fake gnome-keyring-daemon (a PATH stub in the tests)
+    has run: it leaves this marker in the state directory."""
+    return os.path.exists(os.path.join(STATE, "keyring_daemon_started"))
+
+
 class _FakeKeyringBackend:
     priority = 1
+
+
+class FailKeyring:
+    """Stands in for keyring's fail backend (recognised by class name)."""
+
+    priority = -1
 
 
 def install_fake_modules():
@@ -182,24 +203,38 @@ def install_fake_modules():
     keyring = types.ModuleType("keyring")
     keyring.errors = errors
 
+    def service_down():
+        return knob("keyring_service_down") and not daemon_started()
+
     def get_password(service, user):
         if knob("keyring_locked"):
             raise KeyringLocked("locked")
+        if service_down():
+            raise SecretServiceNotAvailableException("no Secret Service on the session bus")
         return kr_get(service, user)
 
     def set_password(service, user, value):
         if knob("keyring_locked"):
             raise KeyringLocked("locked")
+        if service_down():
+            raise SecretServiceNotAvailableException("no Secret Service on the session bus")
         kr_set(service, user, value)
 
     def delete_password(service, user):
+        if service_down():
+            raise SecretServiceNotAvailableException("no Secret Service on the session bus")
         if not kr_delete(service, user):
             raise PasswordDeleteError("missing")
+
+    def get_keyring():
+        if knob("keyring_no_backend") and not daemon_started():
+            return FailKeyring()
+        return _FakeKeyringBackend()
 
     keyring.get_password = get_password
     keyring.set_password = set_password
     keyring.delete_password = delete_password
-    keyring.get_keyring = lambda: _FakeKeyringBackend()
+    keyring.get_keyring = get_keyring
 
     google = types.ModuleType("google")
     oauth2 = types.ModuleType("google.oauth2")
