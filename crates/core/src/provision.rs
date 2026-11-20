@@ -328,7 +328,13 @@ fn kept_endpoint(ops: &dyn ProvisionOps, name: &str, before: &BTreeSet<String>) 
         .iter()
         .find(|s| s.name.as_deref() == Some(name))
         .copied()
-        .or_else(|| (created.len() == 1).then_some(created[0]))
+        .or(match created.as_slice() {
+            // Exactly one new assignment: it is the kept session even though
+            // it is unnamed. (A checked lookup, not `then_some(created[0])`:
+            // that argument is evaluated eagerly and panics on an empty diff.)
+            [only] => Some(*only),
+            _ => None,
+        })
         .map(|s| s.endpoint.clone())
         .unwrap_or_default()
 }
@@ -574,6 +580,14 @@ fn run(
             return Err(Error::cancelled());
         }
         let endpoint = kept_endpoint(ops, name, &before);
+        // The endpoint lookup runs on its own token and can take a while on
+        // the real CLI; a cancel that landed during it must still release
+        // the VM instead of reporting success.
+        if cancel.is_cancelled() {
+            events(ProvisionEvent::Releasing { attempt });
+            release(ops, name)?;
+            return Err(Error::cancelled());
+        }
         events(ProvisionEvent::Ready {
             name: name.to_owned(),
             gpu: hardware.gpu.clone(),
@@ -611,6 +625,10 @@ mod tests {
         cancel_on_probe: Option<CancelToken>,
         /// The user cancels while `colab new` waits for Colab, and the host kills it.
         cancel_on_create: Option<CancelToken>,
+        /// The user cancels during the endpoint lookup at the end of a
+        /// successful attempt: the first `sessions` call after the probe
+        /// flips the token.
+        cancel_on_final_listing: Option<CancelToken>,
         /// The Nth `sessions` call (1-based) is the first to list an unnamed VM that a
         /// killed `colab new` got after all.
         orphan_on_listing: Option<usize>,
@@ -634,6 +652,11 @@ mod tests {
     impl ProvisionOps for Fake {
         fn sessions(&self, _: &CancelToken) -> Result<Vec<ServerSession>> {
             self.log.borrow_mut().push("sessions".into());
+            if let Some(c) = &self.cancel_on_final_listing
+                && self.log.borrow().iter().any(|l| l == "probe")
+            {
+                c.cancel();
+            }
             let listings = self
                 .log
                 .borrow()
@@ -1090,5 +1113,30 @@ mod tests {
         f.live.borrow_mut().push(sess(None, "old-endpoint"));
         f.live.borrow_mut().push(sess(None, "new-endpoint"));
         assert_eq!(kept_endpoint(&f, "llm", &before), "new-endpoint");
+
+        // No new endpoint at all (the runtime vanished before the final
+        // listing): nothing to confirm, and no panic on the empty diff.
+        f.live.borrow_mut().clear();
+        f.live.borrow_mut().push(sess(None, "old-endpoint"));
+        assert_eq!(kept_endpoint(&f, "llm", &before), "");
+        f.live.borrow_mut().clear();
+        assert_eq!(kept_endpoint(&f, "llm", &BTreeSet::new()), "");
+    }
+
+    #[test]
+    fn a_cancel_during_the_endpoint_lookup_releases_the_vm() {
+        let cancel = CancelToken::new();
+        let f = Fake {
+            creates: RefCell::new(VecDeque::from([Ok(40_960)])),
+            cancel_on_final_listing: Some(cancel.clone()),
+            ..Default::default()
+        };
+        let (r, ev, _) = run_fake(&f, &spec(None, 1, OnExhausted::StopAndFail), &cancel);
+        assert!(r.unwrap_err().is(ErrorKind::Cancelled));
+        assert!(f.live.borrow().is_empty(), "the cancel left a VM behind");
+        assert!(
+            !ev.iter().any(|e| matches!(e, ProvisionEvent::Ready { .. })),
+            "a cancelled provision must not report ready"
+        );
     }
 }
