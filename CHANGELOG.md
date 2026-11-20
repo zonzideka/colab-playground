@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/zonzideka/colab-playground/compare/v0.2.2...v0.2.3) (2026-11-20)
+
+
+### Fixed
+
+* **core:** check the endpoint diff and recheck cancellation after the endpoint lookup ([#7](https://github.com/zonzideka/colab-playground/issues/7)) ([973f2ce](https://github.com/zonzideka/colab-playground/commit/973f2ce14bf5f05c3dce47813713e9bbb62b2e4b))
+
 ## [0.2.2](https://github.com/zonzideka/colab-playground/compare/v0.2.1...v0.2.2) (2026-11-19)
 
 
