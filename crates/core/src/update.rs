@@ -3,9 +3,10 @@
 //! One GET to the GitHub API for the latest release of this repository (the generic
 //! `colab-playground/<version>` User-Agent of [`crate::http`] is all it sends). Releases are
 //! tagged `v<version>`; versions compare by semantic-version rules (a pre-release is older than
-//! its release, build metadata is ignored) and only a strictly newer one is an update. Nothing is
-//! downloaded or installed: the result carries the release page to open in the browser, which is
-//! always a page under this repository's releases.
+//! its release, build metadata is ignored) and only a strictly newer one is an update. The result
+//! carries the release page (always under this repository's releases) and the release's assets;
+//! [`crate::self_update`] downloads and installs from those assets, and the page stays as the
+//! fallback for platforms without an installable asset.
 
 use std::cmp::Ordering;
 
@@ -177,6 +178,18 @@ fn compare_pre(a: &[String], b: &[String]) -> Ordering {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Asset {
+    /// The file name (`colab-playground-…-….exe`, `SHA256SUMS`, …).
+    pub name: String,
+    /// Its `browser_download_url`, already checked to sit under this release.
+    pub url: String,
+    pub size: u64,
+}
+
+/// The name of the release's checksum asset.
+pub const SUMS_ASSET_NAME: &str = "SHA256SUMS";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Release {
     /// Its version (without the `v`).
     pub version: String,
@@ -184,6 +197,49 @@ pub struct Release {
     pub tag: String,
     /// The page to open (always under this repository's releases).
     pub page: String,
+    /// Its downloadable assets (only the ones that passed the URL and name checks).
+    #[serde(default)]
+    pub assets: Vec<Asset>,
+}
+
+impl Release {
+    /// The asset named exactly `name`, if the release carries one.
+    pub fn asset_named(&self, name: &str) -> Option<&Asset> {
+        self.assets.iter().find(|asset| asset.name == name)
+    }
+
+    /// The platform asset plus `SHA256SUMS`, when both are present. Only then can the app
+    /// download, verify and install this release by itself.
+    pub fn installable_asset(&self) -> Option<&Asset> {
+        let asset = self.asset_named(&platform_asset_name(&self.version)?)?;
+        self.asset_named(SUMS_ASSET_NAME)?;
+        Some(asset)
+    }
+}
+
+/// The download asset name for this build's platform and architecture, `None` where the
+/// installer does not support it (those platforms keep opening the release page instead).
+pub fn platform_asset_name(version: &str) -> Option<String> {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        return Some(format!(
+            "colab-playground-{version}-aarch64-apple-darwin.zip"
+        ));
+    }
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        return Some(format!(
+            "colab-playground-{version}-x86_64-pc-windows-msvc.exe"
+        ));
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        return Some(format!(
+            "colab-playground-{version}-x86_64-unknown-linux-gnu.tar.gz"
+        ));
+    }
+    #[allow(unreachable_code)]
+    None
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,6 +255,17 @@ struct LatestRelease {
     tag_name: String,
     #[serde(default)]
     html_url: String,
+    #[serde(default)]
+    assets: Vec<LatestAsset>,
+}
+
+#[derive(Deserialize)]
+struct LatestAsset {
+    name: String,
+    #[serde(default)]
+    browser_download_url: String,
+    #[serde(default)]
+    size: u64,
 }
 
 /// Asks GitHub whether a release newer than `current` exists for `owner/repo`.
@@ -246,10 +313,32 @@ pub fn check(
     if version <= current {
         return Ok(UpdateStatus::UpToDate);
     }
+    // Only assets that really belong to this release's download area and read as plain file
+    // names are kept; the rest are dropped without failing the check.
+    let download_prefix = format!(
+        "https://github.com/{owner}/{repo}/releases/download/{}/",
+        latest.tag_name
+    );
+    let assets = latest
+        .assets
+        .into_iter()
+        .filter(|asset| {
+            asset.browser_download_url.starts_with(&download_prefix)
+                && !asset.name.is_empty()
+                && !asset.name.contains('/')
+                && !asset.name.contains("..")
+        })
+        .map(|asset| Asset {
+            name: asset.name,
+            url: asset.browser_download_url,
+            size: asset.size,
+        })
+        .collect();
     Ok(UpdateStatus::Available(Release {
         version: version.to_string(),
         tag: latest.tag_name,
         page: safe_release_page(&latest.html_url, owner, repo),
+        assets,
     }))
 }
 
@@ -322,6 +411,7 @@ mod tests {
                 version: "0.3.0".into(),
                 tag: "v0.3.0".into(),
                 page: PAGE.into(),
+                assets: vec![],
             })
         );
         assert_eq!(
@@ -446,5 +536,89 @@ mod tests {
         );
         assert_eq!(repo_slug("https://gitlab.com/a/b"), None);
         assert_eq!(repo_slug("https://github.com/a/b/c"), None);
+    }
+
+    #[test]
+    fn release_assets_are_filtered_to_this_releases_download_area() {
+        let body = r#"{
+            "tag_name": "v0.3.0",
+            "html_url": "https://github.com/owner/repo/releases/tag/v0.3.0",
+            "assets": [
+                {"name": "colab-playground-0.3.0-x86_64-pc-windows-msvc.exe",
+                 "browser_download_url": "https://github.com/owner/repo/releases/download/v0.3.0/colab-playground-0.3.0-x86_64-pc-windows-msvc.exe",
+                 "size": 100},
+                {"name": "SHA256SUMS",
+                 "browser_download_url": "https://github.com/owner/repo/releases/download/v0.3.0/SHA256SUMS",
+                 "size": 10},
+                {"name": "evil.exe",
+                 "browser_download_url": "https://evil.example.com/releases/download/v0.3.0/evil.exe",
+                 "size": 1},
+                {"name": "..",
+                 "browser_download_url": "https://github.com/owner/repo/releases/download/v0.3.0/..",
+                 "size": 1},
+                {"name": "a/b",
+                 "browser_download_url": "https://github.com/owner/repo/releases/download/v0.3.0/a/b",
+                 "size": 1}
+            ]
+        }"#;
+        let fake = Fake::new(200, body);
+        let UpdateStatus::Available(release) = run(&fake, "0.2.0").unwrap() else {
+            panic!("expected an update");
+        };
+        let names: Vec<&str> = release
+            .assets
+            .iter()
+            .map(|asset| asset.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "colab-playground-0.3.0-x86_64-pc-windows-msvc.exe",
+                "SHA256SUMS"
+            ]
+        );
+    }
+
+    #[test]
+    fn installable_asset_needs_both_the_platform_asset_and_the_sums() {
+        // On a platform the installer does not support there is no platform asset name, so no
+        // release is installable; the assertion below still holds there (both sides are None).
+        let platform = platform_asset_name("0.3.0");
+        let asset = |name: &str| Asset {
+            name: name.to_owned(),
+            url: format!("https://github.com/owner/repo/releases/download/v0.3.0/{name}"),
+            size: 1,
+        };
+        let release = |assets: Vec<Asset>| Release {
+            version: "0.3.0".into(),
+            tag: "v0.3.0".into(),
+            page: PAGE.into(),
+            assets,
+        };
+        // Platform asset and sums present: installable when the platform is supported.
+        if let Some(name) = &platform {
+            let both = release(vec![
+                asset(name),
+                asset(SUMS_ASSET_NAME),
+                asset("colab-playground-0.3.0-x86_64-unknown-linux-gnu.tar.gz"),
+            ]);
+            assert_eq!(both.installable_asset().map(|a| &a.name), Some(name));
+        }
+        // Missing the sums, or only the sums, is never installable.
+        match &platform {
+            Some(name) => {
+                let no_sums = release(vec![asset(name)]);
+                assert_eq!(no_sums.installable_asset(), None);
+                let only_sums = release(vec![asset(SUMS_ASSET_NAME)]);
+                assert_eq!(only_sums.installable_asset(), None);
+            }
+            None => {
+                let both = release(vec![
+                    asset(SUMS_ASSET_NAME),
+                    asset("colab-playground-0.3.0-x86_64-pc-windows-msvc.exe"),
+                ]);
+                assert_eq!(both.installable_asset(), None);
+            }
+        }
     }
 }

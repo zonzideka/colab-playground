@@ -2,9 +2,11 @@
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::CancelToken;
 use crate::error::{Error, ErrorKind, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +20,31 @@ pub struct HttpResponse {
 pub trait HttpClient: Send + Sync {
     /// GETs `url` with extra headers. Non-2xx statuses are returned, not errors.
     fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<HttpResponse>;
+
+    /// Downloads `url` to `dest`, returning the bytes written. `progress` is called with
+    /// `(written, total)` as the body arrives. Non-2xx statuses are [`ErrorKind::Http`].
+    ///
+    /// The default reads the whole body through [`Self::get`], so it is capped by that
+    /// client's read limit (64 MiB for the real one) and suits tests and fakes.
+    fn download(
+        &self,
+        url: &str,
+        dest: &Path,
+        cancel: &CancelToken,
+        progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
+    ) -> Result<u64> {
+        let response = self.get(url, &[])?;
+        if !(200..=299).contains(&response.status) {
+            return Err(Error::new(ErrorKind::Http)
+                .with("status", response.status)
+                .with("url", url));
+        }
+        cancel.check()?;
+        let bytes = response.body.len() as u64;
+        std::fs::write(dest, &response.body)?;
+        progress(bytes, Some(bytes));
+        Ok(bytes)
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -73,6 +100,54 @@ impl HttpClient for UreqClient {
                     .detail(e.to_string())
             })?;
         Ok(HttpResponse { status, body })
+    }
+
+    fn download(
+        &self,
+        url: &str,
+        dest: &Path,
+        cancel: &CancelToken,
+        progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
+    ) -> Result<u64> {
+        // A streaming agent without the global timeout a big download would trip; a connect
+        // timeout still bounds the handshake.
+        let config = ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(30)))
+            .http_status_as_error(false)
+            .user_agent(concat!("colab-playground/", env!("CARGO_PKG_VERSION")))
+            .build();
+        let agent = ureq::Agent::new_with_config(config);
+        let mut resp = agent.get(url).call().map_err(|e| {
+            Error::new(ErrorKind::Http)
+                .with("url", url)
+                .detail(e.to_string())
+        })?;
+        let status = resp.status().as_u16();
+        if !(200..=299).contains(&status) {
+            return Err(Error::new(ErrorKind::Http)
+                .with("status", status)
+                .with("url", url));
+        }
+        let total = resp.body().content_length();
+        let mut reader = resp.body_mut().as_reader();
+        let mut file = std::fs::File::create(dest)?;
+        let mut buf = [0u8; 64 * 1024];
+        let mut written: u64 = 0;
+        loop {
+            cancel.check()?;
+            let n = reader.read(&mut buf).map_err(|e| {
+                Error::new(ErrorKind::Http)
+                    .with("url", url)
+                    .detail(e.to_string())
+            })?;
+            if n == 0 {
+                break;
+            }
+            file.write_all(&buf[..n])?;
+            written += n as u64;
+            progress(written, total);
+        }
+        Ok(written)
     }
 }
 

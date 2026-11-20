@@ -375,6 +375,19 @@ pub trait Backend: Send + Sync {
         let _ = cancel;
         Err(Error::new(ErrorKind::Unsupported).detail("this backend cannot check for updates"))
     }
+
+    /// Downloads `release`, verifies it against the release's SHA256SUMS and stages it for
+    /// [`crate::self_update::apply`]. `events` receives `(written, total)` download progress.
+    /// Backends that cannot install updates say so.
+    fn stage_update(
+        &self,
+        release: &crate::update::Release,
+        events: std::sync::mpsc::Sender<(u64, Option<u64>)>,
+        cancel: &CancelToken,
+    ) -> Result<crate::self_update::StagedUpdate> {
+        let _ = (release, events, cancel);
+        Err(Error::new(ErrorKind::Unsupported).detail("this backend cannot install updates"))
+    }
 }
 
 /// `<prefix>-<4 hex>`, unique among `taken`. The prefix is reduced to

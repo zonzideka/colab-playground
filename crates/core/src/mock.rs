@@ -2056,6 +2056,9 @@ impl Backend for MockBackend {
                 tag: format!("v{next}"),
                 version: next,
                 page,
+                // The mock announces no downloadable assets, so the app's install button stays
+                // out of reach in the simulation (it never downloads anything).
+                assets: Vec::new(),
             },
         ))
     }

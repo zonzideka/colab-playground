@@ -20,6 +20,7 @@ pub mod plugins;
 pub mod provision;
 pub mod quant;
 pub mod real;
+pub mod self_update;
 pub mod sessions;
 pub mod tunnel;
 pub mod update;

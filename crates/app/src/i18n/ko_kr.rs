@@ -435,6 +435,10 @@ pub(super) const MESSAGES: Messages = &[
         "지금은 Colab에 이를 위한 여유 리소스가 없습니다.",
     ),
     (
+        ERR_CHECKSUM_MISMATCH,
+        "다운로드한 업데이트가 릴리스와 함께 공개된 체크섬과 일치하지 않아 설치하지 않았습니다.",
+    ),
+    (
         ERR_ALLOCATION_TIMEOUT,
         "Colab이 이 하드웨어 요청에 끝내 응답하지 않았습니다.",
     ),
@@ -1088,9 +1092,23 @@ pub(super) const MESSAGES: Messages = &[
         UPDATE_NOTICE_TITLE,
         "Colab Playground {version} 버전을 사용할 수 있습니다",
     ),
+    (UPDATE_NOTICE_BODY, "릴리스 페이지에서 다운로드하십시오."),
     (
-        UPDATE_NOTICE_BODY,
-        "릴리스 페이지에서 다운로드하십시오. 이 앱은 업데이트를 직접 다운로드하거나 설치하지 않습니다.",
+        UPDATE_NOTICE_BODY_INSTALL,
+        "여기에서 바로 설치하거나 릴리스 페이지에서 다운로드할 수 있습니다.",
+    ),
+    (UPDATE_INSTALL, "다운로드 및 설치"),
+    (UPDATE_DOWNLOADING_PCT, "업데이트 다운로드 중… {percent}%"),
+    (UPDATE_DOWNLOADING_SIZE, "업데이트 다운로드 중… {size}"),
+    (
+        UPDATE_READY,
+        "{version} 버전 다운로드가 완료되어 설치할 수 있습니다.",
+    ),
+    (UPDATE_RESTART, "재시작하고 업데이트"),
+    (UPDATE_INSTALL_FAILED_TITLE, "업데이트를 설치할 수 없습니다"),
+    (
+        UPDATE_INSTALL_FAILED,
+        "업데이트를 설치할 수 없습니다: {why}",
     ),
     (UPDATE_DISMISS, "다시 표시 안 함"),
     (UPDATE_BADGE, "새 버전"),

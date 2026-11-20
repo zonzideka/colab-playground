@@ -74,6 +74,8 @@ pub enum Op {
     StopAll,
     /// Checking GitHub for a newer release.
     UpdateCheck,
+    /// Downloading and staging a newer release for an in-place update.
+    UpdateInstall,
 }
 
 impl Op {

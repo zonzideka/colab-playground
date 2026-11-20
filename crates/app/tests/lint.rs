@@ -193,13 +193,17 @@ fn in_a_macro_a_const_still_names_its_number() {
 }
 
 /// Only these files may name a target OS.
-const OS_HOMES: [&str; 3] = [
+const OS_HOMES: [&str; 5] = [
     // The app's per-OS module.
     "crates/app/src/platform.rs",
     // The `Host` abstraction: where commands run.
     "crates/core/src/host.rs",
     // Where data lives: it makes files owner-only, which only unix can express.
     "crates/core/src/paths.rs",
+    // Which asset a release ships for this platform.
+    "crates/core/src/update.rs",
+    // Downloading, extracting and swapping an update differs per OS.
+    "crates/core/src/self_update.rs",
 ];
 
 /// Identifiers, not text: `windows_subsystem`, `feature = "windows"` and a "Windows" in a

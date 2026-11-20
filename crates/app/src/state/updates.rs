@@ -1,4 +1,5 @@
-//! The update check: whether a newer release is published, never downloading or installing.
+//! The update check and the in-place install: whether a newer release is published, and
+//! downloading, verifying and swapping it in when the user asks.
 //!
 //! Automatic checks run from the usage poller (so never before the first frame or the setup
 //! checks), at most once a day on the backend clock; the time of the last check is saved, so a
@@ -6,11 +7,15 @@
 //! Settings → About; a manual one also says so in a toast. A found release is announced once
 //! per version (a banner the user can dismiss for that version) and stays marked in the sidebar
 //! and in About until this build is at least that version.
+//!
+//! Installing is always manual: from the banner or About the user downloads the release
+//! (verified against its SHA256SUMS by the backend), then restarts to swap it in. Platforms
+//! whose release has no installable asset keep the older flow of opening the release page.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use colab_playground_core::{
-    Error,
+    Error, ErrorKind,
     update::{self, Release, UpdateStatus, Version},
 };
 use ely_gpui_component::{feedback::Toast, primitives::Severity};
@@ -34,6 +39,16 @@ pub enum UpdateCheck {
     Checking,
     UpToDate,
     Available(Release),
+    /// The release is downloading (and then verifying) in the background.
+    Downloading {
+        release: Release,
+        received: u64,
+        total: Option<u64>,
+    },
+    /// The release is downloaded and verified, waiting for a restart to swap in.
+    Ready {
+        release: Release,
+    },
     Failed(Error),
 }
 
@@ -94,11 +109,133 @@ impl AppState {
         cx.notify();
     }
 
-    /// Opens the release page in the browser (the app never downloads anything itself).
+    /// Opens the release page in the browser: the fallback for platforms whose release has
+    /// no installable asset, and for a download that failed.
     pub fn open_update_page(&self, cx: &mut Context<Self>) {
         if let Some((_, page)) = self.update_available() {
             cx.open_url(&page);
         }
+    }
+
+    /// Whether the found release can be installed from inside the app on this platform.
+    pub fn update_installable(&self) -> bool {
+        match &self.update {
+            UpdateCheck::Available(release) => release.installable_asset().is_some(),
+            _ => false,
+        }
+    }
+
+    /// The localized one-line progress of a running install download, for the banner and About.
+    pub fn update_progress(&self, cx: &gpui::App) -> Option<gpui::SharedString> {
+        let UpdateCheck::Downloading {
+            received, total, ..
+        } = &self.update
+        else {
+            return None;
+        };
+        Some(match total {
+            Some(total) if *total > 0 => crate::i18n::tr_args(
+                cx,
+                keys::UPDATE_DOWNLOADING_PCT,
+                &[("percent", &((*received * 100 / *total).to_string()))],
+            ),
+            _ => crate::i18n::tr_args(
+                cx,
+                keys::UPDATE_DOWNLOADING_SIZE,
+                &[("size", &crate::format::bytes(cx, *received))],
+            ),
+        })
+    }
+
+    /// Downloads the found release in the background; success lands in
+    /// [`UpdateCheck::Ready`] with the staged update kept for [`Self::restart_to_update`].
+    /// A failure is toasted and the state returns to `Available`, so the user can retry or
+    /// fall back to the release page.
+    pub fn install_update(&mut self, cx: &mut Context<Self>) {
+        let UpdateCheck::Available(release) = &self.update else {
+            return;
+        };
+        if release.installable_asset().is_none() {
+            return;
+        }
+        let release = release.clone();
+        self.update = UpdateCheck::Downloading {
+            release: release.clone(),
+            received: 0,
+            total: None,
+        };
+        let for_done = release.clone();
+        self.run_backend_streaming(
+            Op::UpdateInstall,
+            cx,
+            move |backend, events, cancel| backend.stage_update(&release, events, cancel),
+            |state, (received, total), _cx| {
+                if let UpdateCheck::Downloading {
+                    received: r,
+                    total: t,
+                    ..
+                } = &mut state.update
+                {
+                    *r = received;
+                    *t = total;
+                }
+            },
+            move |state, result, cx| {
+                match result {
+                    Ok(staged) => {
+                        state.staged_update = Some(staged);
+                        state.update = UpdateCheck::Ready { release: for_done };
+                    }
+                    Err(error) if error.kind == ErrorKind::Cancelled => {
+                        state.update = UpdateCheck::Available(for_done);
+                    }
+                    Err(error) => {
+                        state.install_failed(error, cx);
+                        state.update = UpdateCheck::Available(for_done);
+                    }
+                }
+                cx.notify();
+            },
+        );
+        cx.notify();
+    }
+
+    /// Asks a running install download to stop; the state returns to `Available` when the
+    /// backend call winds down.
+    pub fn cancel_update_install(&mut self, cx: &mut Context<Self>) {
+        self.ops.cancel(Op::UpdateInstall);
+        cx.notify();
+    }
+
+    /// Swaps the staged update in and exits, so the spawned new instance takes over. A
+    /// failed swap keeps the staged update and the `Ready` state, ready to try again.
+    pub fn restart_to_update(&mut self, cx: &mut Context<Self>) {
+        let Some(staged) = self.staged_update.take() else {
+            return;
+        };
+        let applied = std::env::current_exe()
+            .map_err(colab_playground_core::Error::from)
+            .and_then(|exe| colab_playground_core::self_update::apply(&staged, &exe));
+        match applied {
+            Ok(()) => {
+                self.persist_settings(cx);
+                std::process::exit(0);
+            }
+            Err(error) => {
+                self.staged_update = Some(staged);
+                self.install_failed(error, cx);
+            }
+        }
+    }
+
+    fn install_failed(&mut self, error: Error, cx: &mut Context<Self>) {
+        log::warn!("updates: the install failed: {error}");
+        let message = errors::explain(&error, false, cx).message;
+        let toast = Toast::new(tr(cx, keys::UPDATE_INSTALL_FAILED_TITLE))
+            .body(message)
+            .severity(Severity::Warning);
+        self.toast(toast, cx);
+        cx.notify();
     }
 
     pub fn check_updates_now(&mut self, cx: &mut Context<Self>) {
@@ -106,8 +243,18 @@ impl AppState {
     }
 
     /// One poller wake: checks when automatic checks are on and a day has passed since the
-    /// last check (on the backend clock).
+    /// last check (on the backend clock). The first wake also removes the leftovers of an
+    /// earlier in-place update (the replaced install's backup, staged downloads).
     pub(crate) fn maybe_check_updates(&mut self, cx: &mut Context<Self>) {
+        if !self.update_cleanup_done {
+            self.update_cleanup_done = true;
+            if let (Ok(current_exe), Some(data_dir)) = (
+                std::env::current_exe(),
+                colab_playground_core::paths::default_local_data_dir(),
+            ) {
+                colab_playground_core::self_update::cleanup_stale(&current_exe, &data_dir);
+            }
+        }
         if self.checks_updates() && !self.ops.is_running(Op::UpdateCheck) {
             self.run_update_check(false, cx);
         }
@@ -154,7 +301,21 @@ impl AppState {
                     }
                     Ok(UpdateStatus::Available(release)) => {
                         state.settings.update_latest = Some(release.version.clone());
-                        state.update = UpdateCheck::Available(release);
+                        // A staged update for a different version is superseded.
+                        if state
+                            .staged_update
+                            .as_ref()
+                            .is_some_and(|staged| staged.version != release.version)
+                        {
+                            state.staged_update = None;
+                        }
+                        // A check landing mid-install must not stomp the install states.
+                        if !matches!(
+                            state.update,
+                            UpdateCheck::Downloading { .. } | UpdateCheck::Ready { .. }
+                        ) {
+                            state.update = UpdateCheck::Available(release);
+                        }
                     }
                     Err(error) => state.update_failed(error, manual, cx),
                 }

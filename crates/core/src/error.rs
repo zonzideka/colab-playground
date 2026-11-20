@@ -116,6 +116,9 @@ pub enum ErrorKind {
     /// The installed CLI's internals differ from what the helper expects
     /// (its Python client API changed).
     UnsupportedCliVersion,
+    /// A downloaded update asset does not match the SHA256SUMS entry of its
+    /// release. Params: `asset` (when known).
+    ChecksumMismatch,
     /// Anything else; see `detail`.
     Other,
 }
@@ -169,6 +172,7 @@ impl ErrorKind {
             ErrorKind::Io => "io",
             ErrorKind::Timeout => "timeout",
             ErrorKind::UnsupportedCliVersion => "unsupported_cli_version",
+            ErrorKind::ChecksumMismatch => "checksum_mismatch",
             ErrorKind::Other => "other",
         }
     }
@@ -202,6 +206,7 @@ impl ErrorKind {
             K::StopUnconfirmed => NextStep::Refresh,
             K::WslUnavailable => NextStep::InstallWsl,
             K::UnsupportedCliVersion => NextStep::UpdateApp,
+            K::ChecksumMismatch => NextStep::UpdateApp,
             K::InstallFailed | K::PluginRunFailed => NextStep::ViewLog,
             K::Http | K::HttpUnavailable | K::GitFailed | K::HealthCheckFailed => {
                 NextStep::CheckNetwork

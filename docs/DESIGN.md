@@ -51,7 +51,7 @@ Goals
 
 Non-goals (v1)
 
-- Installers, code signing, installing updates in place, plugin marketplace/registry.
+- Installers, code signing, plugin marketplace/registry.
 - Native-code or WASM plugins. Plugins are declarative (manifest + scripts that run on the VM).
 - A browser/WASM build. GPUI draws to a canvas with no DOM or accessibility tree there, the
   process-spawning backend cannot exist in WASM, and it would double the toolchain. UI tests use
