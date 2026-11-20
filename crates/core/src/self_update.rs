@@ -349,6 +349,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn apply_swaps_the_binary_and_keeps_a_backup() {
         let dir = tempfile::tempdir().unwrap();
@@ -365,6 +366,7 @@ mod tests {
         assert!(dir.path().join("colab-playground.old").exists());
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn apply_restores_the_backup_when_the_copy_fails() {
         let dir = tempfile::tempdir().unwrap();
@@ -382,6 +384,7 @@ mod tests {
         assert!(!dir.path().join("colab-playground.old").exists());
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn cleanup_stale_removes_the_backup_and_the_updates_dir() {
         let dir = tempfile::tempdir().unwrap();
@@ -389,6 +392,86 @@ mod tests {
         std::fs::write(&current, b"old").unwrap();
         let backup = dir.path().join("colab-playground.old");
         std::fs::write(&backup, b"stale").unwrap();
+        let data = dir.path().join("data");
+        let updates = data.join("updates");
+        std::fs::create_dir_all(updates.join("0.9.0")).unwrap();
+        cleanup_stale(&current, &data);
+        assert!(!backup.exists());
+        assert!(!updates.exists());
+    }
+
+    /// A minimal `.app` bundle holding `exe_bytes` as its executable, for the macOS swap.
+    #[cfg(target_os = "macos")]
+    fn fake_bundle(parent: &Path, exe_bytes: &[u8]) -> PathBuf {
+        let bundle = parent.join("Colab Playground.app");
+        let macos_dir = bundle.join("Contents").join("MacOS");
+        std::fs::create_dir_all(&macos_dir).unwrap();
+        std::fs::write(macos_dir.join("colab-playground"), exe_bytes).unwrap();
+        bundle
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn apply_swaps_the_bundle_and_keeps_a_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let install = dir.path().join("install");
+        let staging = dir.path().join("staging");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::create_dir_all(&staging).unwrap();
+        let bundle = fake_bundle(&install, b"old");
+        let current = bundle
+            .join("Contents")
+            .join("MacOS")
+            .join("colab-playground");
+        let staged = StagedUpdate {
+            version: "1.0.0".into(),
+            dir: staging.clone(),
+            payload: fake_bundle(&staging, b"new bytes"),
+        };
+        apply(&staged, &current).unwrap();
+        assert_eq!(std::fs::read(&current).unwrap(), b"new bytes");
+        let backup_exe = install
+            .join("Colab Playground.app.old")
+            .join("Contents")
+            .join("MacOS")
+            .join("colab-playground");
+        assert_eq!(std::fs::read(backup_exe).unwrap(), b"old");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn apply_restores_the_bundle_when_the_swap_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let install = dir.path().join("install");
+        std::fs::create_dir_all(&install).unwrap();
+        let bundle = fake_bundle(&install, b"old");
+        let current = bundle
+            .join("Contents")
+            .join("MacOS")
+            .join("colab-playground");
+        let staged = StagedUpdate {
+            version: "1.0.0".into(),
+            dir: dir.path().join("updates").join("1.0.0"),
+            // The payload bundle is missing, so both the rename and the ditto copy fail.
+            payload: dir.path().join("missing.app"),
+        };
+        let error = apply(&staged, &current).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Other);
+        assert_eq!(std::fs::read(&current).unwrap(), b"old");
+        assert!(!install.join("Colab Playground.app.old").exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cleanup_stale_removes_the_bundle_backup_and_the_updates_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = fake_bundle(dir.path(), b"new");
+        let current = bundle
+            .join("Contents")
+            .join("MacOS")
+            .join("colab-playground");
+        let backup = dir.path().join("Colab Playground.app.old");
+        std::fs::create_dir_all(backup.join("Contents")).unwrap();
         let data = dir.path().join("data");
         let updates = data.join("updates");
         std::fs::create_dir_all(updates.join("0.9.0")).unwrap();
