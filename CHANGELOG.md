@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/zonzideka/colab-playground/compare/v0.2.3...v0.3.0) (2026-11-20)
+
+
+### Added
+
+* **app:** install updates in place instead of sending users to the release page ([#10](https://github.com/zonzideka/colab-playground/issues/10)) ([eff583f](https://github.com/zonzideka/colab-playground/commit/eff583f9ff6fab9d0f468d42a234dc4cad42ebbc))
+
+
+### Fixed
+
+* **core:** start the keyring daemon on Linux when the Secret Service is down ([#9](https://github.com/zonzideka/colab-playground/issues/9)) ([88d3938](https://github.com/zonzideka/colab-playground/commit/88d3938220757530b53b1c27fb2c1034a3cd58bd))
+
 ## [0.2.3](https://github.com/zonzideka/colab-playground/compare/v0.2.2...v0.2.3) (2026-11-20)
 
 
