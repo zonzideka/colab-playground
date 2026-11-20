@@ -478,7 +478,11 @@ pub(super) const MESSAGES: Messages = &[
     (ERR_ACCOUNT_NOT_FOUND, "That account is no longer saved."),
     (
         ERR_KEYRING_UNAVAILABLE,
-        "The system keyring can't be reached.",
+        "The system keyring can't be reached. The app already tried to start the keyring service; on Linux, if a prompt asks for a keyring password, unlock the login keyring, then check again.",
+    ),
+    (
+        ERR_KEYRING_NOT_INSTALLED,
+        "No keyring service is installed. On Ubuntu/Debian, run this command to install it, then restart the app: sudo apt install gnome-keyring",
     ),
     (ERR_ADD_IN_PROGRESS, "Another sign-in is still in progress."),
     (

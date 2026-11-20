@@ -464,7 +464,14 @@ pub(super) const MESSAGES: Messages = &[
         ERR_ACCOUNT_NOT_FOUND,
         "해당 계정은 더 이상 저장되어 있지 않습니다.",
     ),
-    (ERR_KEYRING_UNAVAILABLE, "시스템 키링에 접근할 수 없습니다."),
+    (
+        ERR_KEYRING_UNAVAILABLE,
+        "시스템 키링에 접근할 수 없습니다. 앱이 키링 서비스 시작을 이미 시도했습니다. Linux에서 비밀번호 입력 창이 나타나면 로그인 키링의 잠금을 해제한 뒤 다시 확인하세요.",
+    ),
+    (
+        ERR_KEYRING_NOT_INSTALLED,
+        "키링 서비스가 설치되어 있지 않습니다. Ubuntu/Debian에서는 다음 명령으로 설치한 뒤 앱을 다시 시작하세요: sudo apt install gnome-keyring",
+    ),
     (ERR_ADD_IN_PROGRESS, "다른 로그인이 아직 진행 중입니다."),
     (
         ERR_LEGACY_TOKEN,
