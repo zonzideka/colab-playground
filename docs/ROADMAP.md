@@ -77,8 +77,6 @@ implementation of the `Backend` trait beside the CLI one and the mock.
   Windows would need an Authenticode certificate or a signing service and a `signtool` step; macOS
   needs a paid Apple Developer ID, signing with the hardened runtime, notarisation with `notarytool`
   and stapling. The keys would live in Actions secrets.
-- Downloading and installing an update from inside the app (the update check opens the release
-  page).
 - Downloads for more targets: Windows and Linux on Arm64, macOS on Intel. Linux desktop integration
   (a `.desktop` file and icon in the archive).
 - A plugin index (discover and update plugins from inside the app).

@@ -148,6 +148,10 @@ pub struct AppState {
     stop_all_pending: bool,
     settings_focus: bool,
     update: updates::UpdateCheck,
+    /// A downloaded, verified update waiting for `restart_to_update`.
+    staged_update: Option<colab_playground_core::self_update::StagedUpdate>,
+    /// Whether the stale-update cleanup has run in this process.
+    update_cleanup_done: bool,
 }
 
 /// A dialog other than the account ones (those are [`AccountDialog`]).
@@ -263,6 +267,8 @@ impl AppState {
                 stop_all_pending: false,
                 settings_focus: false,
                 update: updates::UpdateCheck::default(),
+                staged_update: None,
+                update_cleanup_done: false,
             };
             state.font_fallbacks = platform::font_fallbacks(language, &state.cjk_fonts);
             state.apply_mode(true, cx);

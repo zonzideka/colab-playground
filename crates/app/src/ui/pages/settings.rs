@@ -177,16 +177,43 @@ fn settings_file(path: String, handle: &Entity<AppState>, cx: &App) -> impl Into
 pub const UPDATE_CHECK_SELECTOR: &str = "update-check";
 /// Selector of "Open download page" in About.
 pub const UPDATE_OPEN_SELECTOR: &str = "update-open";
+/// Selector of "Download and install" in About.
+pub const UPDATE_INSTALL_SELECTOR: &str = "update-install";
+/// Selector of "Restart to update" in About.
+pub const UPDATE_RESTART_SELECTOR: &str = "update-restart";
+/// Selector of the install download's Cancel in About.
+pub const UPDATE_CANCEL_SELECTOR: &str = "update-cancel";
 pub const UPDATE_AUTO_SELECTOR: &str = "update-auto";
 
-/// The update status, "Check for updates", and "Open download page" when there is a newer
-/// release. Selector of the status: `update-status <state>`.
+/// The update status and its actions: "Check for updates", and for a newer release the
+/// in-place install where this platform supports it (followed through the download to the
+/// restart), with "Open download page" as the fallback. Selector of the status:
+/// `update-status <state>`.
 fn updates_row(state: &AppState, handle: &Entity<AppState>, cx: &App) -> SettingsRow {
     use crate::state::UpdateCheck;
     let checking = matches!(state.update_check(), UpdateCheck::Checking);
+    let downloading = matches!(state.update_check(), UpdateCheck::Downloading { .. });
     let available = state.update_available();
     let (name, status): (&str, SharedString) = match (state.update_check(), &available) {
         (UpdateCheck::Checking, _) => ("checking", tr(cx, keys::UPDATE_CHECKING)),
+        (UpdateCheck::Downloading { .. }, _) => (
+            "downloading",
+            state
+                .update_progress(cx)
+                .unwrap_or_else(|| tr(cx, keys::UPDATE_NOT_CHECKED)),
+        ),
+        (UpdateCheck::Ready { release }, _) => (
+            "ready",
+            tr_args(cx, keys::UPDATE_READY, &[("version", &release.version)]),
+        ),
+        (UpdateCheck::Failed(error), Some(_)) => (
+            "failed",
+            tr_args(
+                cx,
+                keys::UPDATE_INSTALL_FAILED,
+                &[("why", &crate::errors::explain(error, false, cx).message)],
+            ),
+        ),
         (_, Some((version, _))) => (
             "available",
             tr_args(cx, keys::UPDATE_AVAILABLE, &[("version", version)]),
@@ -225,17 +252,56 @@ fn updates_row(state: &AppState, handle: &Entity<AppState>, cx: &App) -> Setting
             )
             .size(ControlSize::Sm)
             .loading(checking)
-            .disabled(checking)
+            .disabled(checking || downloading)
             .on_click(move |_, _, cx| check.update(cx, |state, cx| state.check_updates_now(cx))),
         ));
-    if available.is_some() {
-        let open = handle.clone();
+    if downloading {
+        let cancel = handle.clone();
         controls = controls.child(tagged(
-            UPDATE_OPEN_SELECTOR,
-            Button::new(UPDATE_OPEN_SELECTOR, tr(cx, keys::UPDATE_OPEN_PAGE))
+            UPDATE_CANCEL_SELECTOR,
+            Button::new(UPDATE_CANCEL_SELECTOR, tr(cx, keys::ACTION_CANCEL))
+                .size(ControlSize::Sm)
+                .on_click(move |_, _, cx| {
+                    cancel.update(cx, |state, cx| state.cancel_update_install(cx))
+                }),
+        ));
+    } else if matches!(state.update_check(), UpdateCheck::Ready { .. }) {
+        let restart = handle.clone();
+        controls = controls.child(tagged(
+            UPDATE_RESTART_SELECTOR,
+            Button::new(UPDATE_RESTART_SELECTOR, tr(cx, keys::UPDATE_RESTART))
                 .size(ControlSize::Sm)
                 .primary()
-                .icon(IconName::ExternalLink)
+                .on_click(move |_, _, cx| {
+                    restart.update(cx, |state, cx| state.restart_to_update(cx))
+                }),
+        ));
+    } else if available.is_some() {
+        let installable = state.update_installable();
+        if installable {
+            let install = handle.clone();
+            controls = controls.child(tagged(
+                UPDATE_INSTALL_SELECTOR,
+                Button::new(UPDATE_INSTALL_SELECTOR, tr(cx, keys::UPDATE_INSTALL))
+                    .size(ControlSize::Sm)
+                    .primary()
+                    .on_click(move |_, _, cx| {
+                        install.update(cx, |state, cx| state.install_update(cx))
+                    }),
+            ));
+        }
+        let open = handle.clone();
+        let open_button = Button::new(UPDATE_OPEN_SELECTOR, tr(cx, keys::UPDATE_OPEN_PAGE))
+            .size(ControlSize::Sm)
+            .icon(IconName::ExternalLink);
+        let open_button = if installable {
+            open_button
+        } else {
+            open_button.primary()
+        };
+        controls = controls.child(tagged(
+            UPDATE_OPEN_SELECTOR,
+            open_button
                 .on_click(move |_, _, cx| open.update(cx, |state, cx| state.open_update_page(cx))),
         ));
     }

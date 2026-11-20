@@ -52,37 +52,123 @@ pub fn render(
 pub const UPDATE_NOTICE_SELECTOR: &str = "update-notice";
 
 /// A newer release, announced once per version above every page until dismissed for that
-/// version; it offers the release page (the app downloads nothing itself).
+/// version. When this platform can install it, the banner offers the in-place install and
+/// follows it through the download to the restart; otherwise it offers the release page.
 fn update_banner(state: &AppState, handle: &Entity<AppState>, cx: &App) -> Option<AnyElement> {
+    use crate::state::UpdateCheck;
     let (version, _) = state.update_notice()?;
     let theme = cx.theme();
-    let (open, dismiss) = (handle.clone(), handle.clone());
-    let dismissed = version.clone();
-    let actions = div()
-        .flex()
-        .gap_2()
-        .child(tagged(
-            "update-notice-open",
-            ely_gpui_component::buttons::Button::new(
-                "update-notice-open",
-                tr(cx, crate::i18n::keys::UPDATE_OPEN_PAGE),
-            )
-            .size(ely_gpui_component::theme::ControlSize::Sm)
-            .primary()
-            .on_click(move |_, _, cx| open.update(cx, |state, cx| state.open_update_page(cx))),
-        ))
-        .child(tagged(
+    let size = ely_gpui_component::theme::ControlSize::Sm;
+    let ghost = ely_gpui_component::buttons::ButtonVariant::Ghost;
+    let dismiss = {
+        let dismiss = handle.clone();
+        let dismissed = version.clone();
+        tagged(
             "update-notice-dismiss",
             ely_gpui_component::buttons::Button::new(
                 "update-notice-dismiss",
                 tr(cx, crate::i18n::keys::UPDATE_DISMISS),
             )
-            .size(ely_gpui_component::theme::ControlSize::Sm)
-            .variant(ely_gpui_component::buttons::ButtonVariant::Ghost)
+            .size(size)
+            .variant(ghost)
             .on_click(move |_, _, cx| {
                 dismiss.update(cx, |state, cx| state.dismiss_update(dismissed.clone(), cx))
             }),
-        ));
+        )
+    };
+    let open = |primary: bool| {
+        let open = handle.clone();
+        let button = ely_gpui_component::buttons::Button::new(
+            "update-notice-open",
+            tr(cx, crate::i18n::keys::UPDATE_OPEN_PAGE),
+        )
+        .size(size);
+        let button = if primary {
+            button.primary()
+        } else {
+            button.variant(ghost)
+        };
+        tagged(
+            "update-notice-open",
+            button
+                .on_click(move |_, _, cx| open.update(cx, |state, cx| state.open_update_page(cx))),
+        )
+    };
+    let (body, actions) = match state.update_check() {
+        UpdateCheck::Downloading { .. } => {
+            let cancel = handle.clone();
+            (
+                state
+                    .update_progress(cx)
+                    .unwrap_or_else(|| tr(cx, crate::i18n::keys::UPDATE_NOTICE_BODY_INSTALL)),
+                div().flex().gap_2().child(tagged(
+                    "update-notice-cancel",
+                    ely_gpui_component::buttons::Button::new(
+                        "update-notice-cancel",
+                        tr(cx, crate::i18n::keys::ACTION_CANCEL),
+                    )
+                    .size(size)
+                    .variant(ghost)
+                    .on_click(move |_, _, cx| {
+                        cancel.update(cx, |state, cx| state.cancel_update_install(cx))
+                    }),
+                )),
+            )
+        }
+        UpdateCheck::Ready { release } => {
+            let restart = handle.clone();
+            (
+                crate::i18n::tr_args(
+                    cx,
+                    crate::i18n::keys::UPDATE_READY,
+                    &[("version", &release.version)],
+                ),
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(tagged(
+                        "update-notice-restart",
+                        ely_gpui_component::buttons::Button::new(
+                            "update-notice-restart",
+                            tr(cx, crate::i18n::keys::UPDATE_RESTART),
+                        )
+                        .size(size)
+                        .primary()
+                        .on_click(move |_, _, cx| {
+                            restart.update(cx, |state, cx| state.restart_to_update(cx))
+                        }),
+                    ))
+                    .child(dismiss),
+            )
+        }
+        _ if state.update_installable() => {
+            let install = handle.clone();
+            (
+                tr(cx, crate::i18n::keys::UPDATE_NOTICE_BODY_INSTALL),
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(tagged(
+                        "update-notice-install",
+                        ely_gpui_component::buttons::Button::new(
+                            "update-notice-install",
+                            tr(cx, crate::i18n::keys::UPDATE_INSTALL),
+                        )
+                        .size(size)
+                        .primary()
+                        .on_click(move |_, _, cx| {
+                            install.update(cx, |state, cx| state.install_update(cx))
+                        }),
+                    ))
+                    .child(open(false))
+                    .child(dismiss),
+            )
+        }
+        _ => (
+            tr(cx, crate::i18n::keys::UPDATE_NOTICE_BODY),
+            div().flex().gap_2().child(open(true)).child(dismiss),
+        ),
+    };
     Some(
         tagged(
             UPDATE_NOTICE_SELECTOR,
@@ -102,7 +188,7 @@ fn update_banner(state: &AppState, handle: &Entity<AppState>, cx: &App) -> Optio
                             &[("version", &version)],
                         ),
                     )
-                    .body(tr(cx, crate::i18n::keys::UPDATE_NOTICE_BODY))
+                    .body(body)
                     .action(actions),
                 ),
         )

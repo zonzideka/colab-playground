@@ -109,6 +109,12 @@ and Settings → About → Backend must read "Colab CLI".
     quit". After the deadline plus 2 minutes the runtime must be gone from the Colab web UI and,
     after restarting the app, from Sessions. If it is still there 5 minutes past the deadline,
     stop it by hand: the watchdog did not release it.
+11. **In-place update** (free; needs two published builds, so rehearse it across a release).
+    Run the older build, check for updates and expect the banner and Settings → About to offer
+    "Download and install". Start it and cancel once: the offer returns. Start it again and let
+    it finish: expect "Restart to update". Restart: the app closes, the new build starts, About
+    shows the new version, and accounts, settings and sessions are unchanged. The replaced
+    install sits next to the new one as `.old` until the following start removes it.
 
 **Afterwards, make sure nothing is billing:** Sessions shows "Nothing is running" with no "Couldn't
 list runtimes on …" error for any account, the burn rate reads "Not in use", and the Colab web UI's

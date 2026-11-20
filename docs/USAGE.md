@@ -8,9 +8,10 @@ What the app does is in the [README](../README.md); the principles and rules beh
 
 Download the file for your computer from the
 [latest release](https://github.com/zonzideka/colab-playground/releases/latest); there is no
-installer. When the app's update check finds a newer version it opens that version's release page,
-where you download it the same way and replace the old file or app (settings and data stay where
-they are, see [Where things are stored](#where-things-are-stored)).
+installer. When the app's update check finds a newer version, it offers to download and install it
+in place (see [Updates](#updates)); the release page stays as the fallback, where you download it
+the same way and replace the old file or app (settings and data stay where they are, see
+[Where things are stored](#where-things-are-stored)).
 
 - **Windows x64:** `colab-playground-<version>-x86_64-pc-windows-msvc.exe` is the whole app; run it.
   It is not code-signed, so SmartScreen may say "Windows protected your PC": click **More info**,
@@ -32,7 +33,8 @@ the real-mode requirements below apply.
 
 ## Updates
 
-The app checks GitHub for a newer release and never downloads or installs one itself.
+The app checks GitHub for a newer release and, on the platforms it ships for, can download and
+install the update in place.
 
 - **Automatic:** shortly after start-up, then at most once a day while the app runs. The time of the
   last check is kept in the settings file, so restarting does not check again within the day. Turn
@@ -41,9 +43,14 @@ The app checks GitHub for a newer release and never downloads or installs one it
 - **What is sent:** one request for this repository's latest release. It carries the app's version
   and nothing about you or your computer.
 - **When a newer version exists:** a notice appears once for that version, and the Settings entry
-  stays marked until you have updated. "Open download page" opens that release on GitHub, where you
-  download it as in [Install a release](#install-a-release).
-- A check that fails is reported in Settings → About (and in a message when you started it by hand).
+  stays marked until you have updated. "Download and install" downloads the file for your platform
+  from that release, checks it against the release's published SHA256SUMS and, when you choose
+  "Restart to update", swaps it in and starts the new version; the replaced install is kept as
+  `.old` until the following start removes it. "Open download page" opens that release on GitHub,
+  where you download it as in [Install a release](#install-a-release) — that stays the way to
+  update on a platform without an installable file, and the fallback when a download fails.
+- A check or install that fails is reported in Settings → About (and in a message when you started
+  it by hand).
 - Demo data never contacts GitHub.
 
 ## Requirements

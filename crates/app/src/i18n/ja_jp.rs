@@ -486,6 +486,10 @@ pub(super) const MESSAGES: Messages = &[
         "現在、Colab にはこれに使えるリソースの空きがありません。",
     ),
     (
+        ERR_CHECKSUM_MISMATCH,
+        "ダウンロードしたアップデートがリリースとともに公開されたチェックサムと一致しないため、インストールしませんでした。",
+    ),
+    (
         ERR_ALLOCATION_TIMEOUT,
         "このハードウェアの要求に Colab が応答しませんでした。",
     ),
@@ -1172,7 +1176,33 @@ pub(super) const MESSAGES: Messages = &[
     ),
     (
         UPDATE_NOTICE_BODY,
-        "リリース ページからダウンロードしてください。このアプリがアップデートを自動でダウンロードしたりインストールしたりすることはありません。",
+        "リリース ページからダウンロードしてください。",
+    ),
+    (
+        UPDATE_NOTICE_BODY_INSTALL,
+        "ここからインストールすることも、リリース ページからダウンロードすることもできます。",
+    ),
+    (UPDATE_INSTALL, "ダウンロードしてインストール"),
+    (
+        UPDATE_DOWNLOADING_PCT,
+        "アップデートをダウンロード中… {percent}%",
+    ),
+    (
+        UPDATE_DOWNLOADING_SIZE,
+        "アップデートをダウンロード中… {size}",
+    ),
+    (
+        UPDATE_READY,
+        "バージョン {version} のダウンロードが完了し、インストールできます。",
+    ),
+    (UPDATE_RESTART, "再起動してアップデート"),
+    (
+        UPDATE_INSTALL_FAILED_TITLE,
+        "アップデートをインストールできませんでした",
+    ),
+    (
+        UPDATE_INSTALL_FAILED,
+        "アップデートをインストールできませんでした: {why}",
     ),
     (UPDATE_DISMISS, "今後表示しない"),
     (UPDATE_BADGE, "新バージョン"),

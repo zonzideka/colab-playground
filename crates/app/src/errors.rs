@@ -62,6 +62,7 @@ pub fn kind_key(kind: ErrorKind) -> Option<&'static str> {
         K::AuthRequired => keys::ERR_AUTH_REQUIRED,
         K::NotEntitled => keys::ERR_NOT_ENTITLED,
         K::CapacityRefused => keys::ERR_CAPACITY_REFUSED,
+        K::ChecksumMismatch => keys::ERR_CHECKSUM_MISMATCH,
         K::AllocationTimeout => keys::ERR_ALLOCATION_TIMEOUT,
         K::SshBusy => keys::ERR_SSH_BUSY,
         K::SessionGone => keys::ERR_SESSION_GONE,

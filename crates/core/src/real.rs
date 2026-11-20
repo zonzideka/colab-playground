@@ -2199,6 +2199,24 @@ impl Backend for RealBackend {
     fn check_for_update(&self, cancel: &CancelToken) -> Result<crate::update::UpdateStatus> {
         crate::update::check_this_app(&*self.inner.cfg.http, cancel)
     }
+
+    fn stage_update(
+        &self,
+        release: &crate::update::Release,
+        events: std::sync::mpsc::Sender<(u64, Option<u64>)>,
+        cancel: &CancelToken,
+    ) -> Result<crate::self_update::StagedUpdate> {
+        let mut progress = |written: u64, total: Option<u64>| {
+            let _ = events.send((written, total));
+        };
+        crate::self_update::stage(
+            &*self.inner.cfg.http,
+            release,
+            &self.inner.cfg.local_dir,
+            cancel,
+            &mut progress,
+        )
+    }
 }
 
 impl RealBackend {
