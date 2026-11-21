@@ -314,7 +314,15 @@ Two verification principles are acceptance criteria, not aspirations:
    mock backend: a retried `request_id` never provisions twice, and a
    cancelled start ends cancelled with the core rolling the allocation
    back. (The lock landed with step 2, in core.)
-4. Tunnels, plugins, models, secrets.
+4. ~~Tunnels, plugins, models, secrets.~~ Done 2026-11-21: `tunnels_list`,
+   `tunnels_open`, `tunnels_close`, `plugins_list`, `plugins_run`,
+   `models_search`, `models_files`, `secrets_set`, `secrets_has`,
+   `secrets_delete`, `colab_update_check`. Two v1 scopings: `plugins_run`
+   targets an existing session only (a plugin-driven provision would bypass
+   the sessions_start guard validation), and `tunnels_open` / `plugins_run`
+   forward their core events as MCP progress notifications when the caller
+   supplies a progress token. Plugin installation and management stay
+   GUI-only, as section 3 states.
 5. Manual smoke: the local agent drives a full cycle — status, start a
    15-minute CPU session, list, stop — and the ledger records a user stop.
    (This is also the standing retest for the stop-reason bookkeeping.)

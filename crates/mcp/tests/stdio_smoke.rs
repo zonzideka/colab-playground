@@ -126,6 +126,17 @@ fn the_mock_server_answers_the_v1_read_tools_over_stdio() {
             "sessions_stop",
             "sessions_extend",
             "guard_poll",
+            "tunnels_list",
+            "tunnels_open",
+            "tunnels_close",
+            "plugins_list",
+            "plugins_run",
+            "models_search",
+            "models_files",
+            "secrets_set",
+            "secrets_has",
+            "secrets_delete",
+            "colab_update_check",
         ]
     );
     let read_only = |name: &str| {
@@ -137,6 +148,10 @@ fn the_mock_server_answers_the_v1_read_tools_over_stdio() {
     assert_eq!(read_only("colab_status"), Some(true));
     assert_eq!(read_only("usage_get"), Some(true));
     assert_eq!(read_only("operations_get"), Some(true));
+    assert_eq!(read_only("models_search"), Some(true));
+    assert_eq!(read_only("models_files"), Some(true));
+    assert_eq!(read_only("secrets_has"), Some(true));
+    assert_eq!(read_only("colab_update_check"), Some(true));
     // Refreshing fetches, listing reconciles (it can write the ledger), and
     // the account query can complete an interrupted add-account rollback:
     // none of them may claim to be read-only.
@@ -396,5 +411,153 @@ fn the_mock_server_runs_a_session_lifecycle_over_stdio() {
     assert!(
         runtimes.iter().all(|r| r["id"]["name"] != json!(name)),
         "the stopped session is gone from the listing"
+    );
+}
+
+#[test]
+fn the_mock_server_covers_tunnels_plugins_models_and_secrets_over_stdio() {
+    let mut client = Client::spawn();
+    client.request(
+        "initialize",
+        json!({
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": { "name": "stdio-smoke", "version": "0" },
+        }),
+    );
+    client.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
+
+    // Tunnels: open on a demo session of the active account, list, close.
+    let opened = client.call_tool_args(
+        "tunnels_open",
+        json!({
+            "account": "mock1",
+            "session": "a100-7f3a",
+            "local_port": 18099,
+            "remote_port": 8099,
+            "health_path": "/health",
+        }),
+    );
+    assert_eq!(opened["result"]["isError"], json!(false), "{opened}");
+    let opened = &opened["result"]["structuredContent"];
+    let tunnel_id = opened["tunnel_id"].as_u64().unwrap();
+    assert_eq!(opened["tunnel"]["state"]["state"], json!("up"));
+    assert_eq!(opened["local_url"], json!("http://127.0.0.1:18099"));
+
+    let listed = client.call_tool("tunnels_list");
+    let tunnels = listed["result"]["structuredContent"]["tunnels"]
+        .as_array()
+        .unwrap();
+    assert!(tunnels.iter().any(|t| t["id"] == json!(tunnel_id)));
+
+    let closed = client.call_tool_args("tunnels_close", json!({ "tunnel_id": tunnel_id }));
+    assert_eq!(closed["result"]["structuredContent"]["closed"], json!(true));
+    let listed = client.call_tool("tunnels_list");
+    let tunnels = listed["result"]["structuredContent"]["tunnels"]
+        .as_array()
+        .unwrap();
+    assert!(tunnels.iter().all(|t| t["id"] != json!(tunnel_id)));
+
+    // The reserved VM port is refused by the core validation.
+    let reserved = client.call_tool_args(
+        "tunnels_open",
+        json!({
+            "account": "mock1",
+            "session": "a100-7f3a",
+            "local_port": 18098,
+            "remote_port": 8080,
+        }),
+    );
+    assert_eq!(reserved["result"]["isError"], json!(true));
+    assert_eq!(
+        reserved["result"]["structuredContent"]["code"],
+        json!("port_reserved")
+    );
+
+    // Plugins: the bundled llama.cpp deploy is listed and runs on an
+    // existing session.
+    let plugins = client.call_tool("plugins_list");
+    let plugin_list = plugins["result"]["structuredContent"]["plugins"]
+        .as_array()
+        .unwrap();
+    let llama = plugin_list
+        .iter()
+        .find(|p| p["manifest"]["id"] == json!("llama-cpp"))
+        .expect("the bundled plugin is listed");
+    assert_eq!(llama["enabled"], json!(true));
+
+    // The plugin's model-repo input is required and has no default (the GUI
+    // makes the user pick one), so the caller supplies it.
+    let run = client.call_tool_args(
+        "plugins_run",
+        json!({
+            "plugin": "llama-cpp",
+            "session": "a100-7f3a",
+            "inputs": { "repo": "unsloth/Qwen3-0.6B-GGUF" },
+        }),
+    );
+    assert_eq!(run["result"]["isError"], json!(false), "{run}");
+    let outcome = &run["result"]["structuredContent"];
+    assert_eq!(outcome["session"], json!("a100-7f3a"));
+    assert!(outcome["run_id"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(outcome["endpoints"].is_array());
+
+    let gone = client.call_tool_args(
+        "plugins_run",
+        json!({
+            "plugin": "llama-cpp",
+            "session": "no-such-session",
+            "inputs": { "repo": "unsloth/Qwen3-0.6B-GGUF" },
+        }),
+    );
+    assert_eq!(gone["result"]["isError"], json!(true));
+    assert_eq!(
+        gone["result"]["structuredContent"]["code"],
+        json!("session_gone")
+    );
+
+    // Models: search, then list the files of the first hit.
+    let search = client.call_tool_args("models_search", json!({ "query": "qwen" }));
+    assert_eq!(search["result"]["isError"], json!(false), "{search}");
+    let models = search["result"]["structuredContent"]["models"]
+        .as_array()
+        .unwrap();
+    assert!(!models.is_empty());
+    let repo = models[0]["id"].as_str().unwrap();
+    let files = client.call_tool_args("models_files", json!({ "repo": repo }));
+    assert_eq!(files["result"]["isError"], json!(false), "{files}");
+    assert!(
+        files["result"]["structuredContent"]["variants"]
+            .as_array()
+            .is_some_and(|v| !v.is_empty())
+    );
+
+    // Secrets: set is write-only (the value appears nowhere in the reply),
+    // has is a boolean, delete removes it.
+    let set = client.call_tool_args(
+        "secrets_set",
+        json!({ "name": "hf_token", "value": "smoke-secret-value" }),
+    );
+    assert_eq!(set["result"]["isError"], json!(false), "{set}");
+    assert!(
+        !set.to_string().contains("smoke-secret-value"),
+        "the secret value must never be echoed"
+    );
+    let has = client.call_tool_args("secrets_has", json!({ "name": "hf_token" }));
+    assert_eq!(has["result"]["structuredContent"]["present"], json!(true));
+    let deleted = client.call_tool_args("secrets_delete", json!({ "name": "hf_token" }));
+    assert_eq!(
+        deleted["result"]["structuredContent"]["deleted"],
+        json!(true)
+    );
+    let has = client.call_tool_args("secrets_has", json!({ "name": "hf_token" }));
+    assert_eq!(has["result"]["structuredContent"]["present"], json!(false));
+
+    // Update check is informational and reports the mock's status.
+    let update = client.call_tool("colab_update_check");
+    assert_eq!(update["result"]["isError"], json!(false), "{update}");
+    assert_eq!(
+        update["result"]["structuredContent"]["status"],
+        json!("up_to_date")
     );
 }

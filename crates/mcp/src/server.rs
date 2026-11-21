@@ -9,17 +9,19 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use colab_playground_core::{
     CancelToken, Error as CoreError, ErrorKind,
     accounts::AccountId,
-    backend::{Backend, RuntimeRef, StopOptions},
+    backend::{Backend, PluginRunEvent, RunTarget, RuntimeRef, StopOptions},
     guard::GuardPolicy,
+    plugins::InputValue,
     provision::ProvisionSpec,
     sessions::Accelerator,
+    tunnel::{TunnelEvent, TunnelId, TunnelSpec, TunnelState},
 };
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorCode,
-        Implementation, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig,
-        Tool, ToolAnnotations,
+        Implementation, ListToolsResult, PaginatedRequestParams, ProgressNotificationParam,
+        ProgressToken, ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
     },
     service::RequestContext,
 };
@@ -78,6 +80,62 @@ impl McpServer {
             Ok(result) => result,
             Err(e) => Err(CoreError::new(ErrorKind::Other).detail(format!("backend task: {e}"))),
         }
+    }
+
+    /// Like [`McpServer::run`], for backend calls that stream progress
+    /// events (tunnel bring-up, plugin runs). Events are forwarded as MCP
+    /// progress notifications when the caller supplied a progress token;
+    /// either way the call runs to completion and its result is returned.
+    async fn run_with_events<T, E>(
+        &self,
+        context: &RequestContext<RoleServer>,
+        progress_token: Option<ProgressToken>,
+        describe: impl Fn(&E) -> String + Send + 'static,
+        call: impl FnOnce(
+            &dyn Backend,
+            std::sync::mpsc::Sender<E>,
+            &CancelToken,
+        ) -> Result<T, CoreError>
+        + Send
+        + 'static,
+    ) -> Result<T, CoreError>
+    where
+        T: Send + 'static,
+        E: Send + 'static,
+    {
+        let token = CancelToken::new();
+        let watcher = {
+            let token = token.clone();
+            let cancelled = context.ct.clone();
+            tokio::spawn(async move {
+                cancelled.cancelled().await;
+                token.cancel();
+            })
+        };
+        let (events_tx, events_rx) = std::sync::mpsc::channel::<E>();
+        let backend = self.backend.clone();
+        let joined = tokio::task::spawn_blocking(move || call(backend.as_ref(), events_tx, &token));
+        let mut progress: f64 = 0.0;
+        let result = join_with_events(joined, events_rx, |event| {
+            progress += 1.0;
+            if let Some(pt) = &progress_token {
+                let message = describe(event);
+                let peer = context.peer.clone();
+                let pt = pt.clone();
+                let n = progress;
+                // Notifications must not wait on the bridge loop.
+                tokio::spawn(async move {
+                    let _ = peer
+                        .notify_progress(
+                            ProgressNotificationParam::new(pt, n).with_message(message),
+                        )
+                        .await;
+                });
+            }
+        })
+        .await;
+        watcher.abort();
+        result
     }
 
     fn status(&self) -> Value {
@@ -342,7 +400,213 @@ fn tools() -> Vec<Tool> {
             "One host-guard evaluation: decisions for every tracked live session, sessions found gone, fresh usage. In v1 no background loop runs the host guards — this call is the evaluation, and the VM watchdog is the standing guard.",
             false,
         ),
+        tool("tunnels_list", "Open port forwards and their state.", false),
+        tool_full(
+            "tunnels_open",
+            "Open a port forward to a session (the session's account must be active). Returns once the tunnel is up or has failed — or after about a minute, with its current state (poll tunnels_list then). Progress notifications carry state changes when the caller supplies a progress token.",
+            false,
+            false,
+            false,
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "account": { "type": "string" },
+                    "session": { "type": "string" },
+                    "local_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                    "remote_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                    "health_path": { "type": "string" },
+                },
+                "required": ["account", "session", "local_port", "remote_port"],
+                "additionalProperties": false,
+            })),
+        ),
+        tool_full(
+            "tunnels_close",
+            "Close a port forward by id (from tunnels_open or tunnels_list). The session keeps running and billing.",
+            false,
+            false,
+            true,
+            schema(json!({
+                "type": "object",
+                "properties": { "tunnel_id": { "type": "integer", "minimum": 0 } },
+                "required": ["tunnel_id"],
+                "additionalProperties": false,
+            })),
+        ),
+        tool(
+            "plugins_list",
+            "Installed plugins (including the bundled llama.cpp deploy) and whether each is enabled.",
+            false,
+        ),
+        tool_full(
+            "plugins_run",
+            "Run a plugin against an existing session (start one with sessions_start first, so it carries the guard). Inputs override the manifest defaults by id; values may be strings, numbers or booleans. The run's log lines and status changes arrive as progress notifications when the caller supplies a progress token; the result carries the run outcome and any service endpoints.",
+            false,
+            false,
+            false,
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "plugin": { "type": "string" },
+                    "session": { "type": "string" },
+                    "inputs": { "type": "object" },
+                },
+                "required": ["plugin", "session"],
+                "additionalProperties": false,
+            })),
+        ),
+        tool_full(
+            "models_search",
+            "Search Hugging Face for GGUF model repos (for plugin runs).",
+            true,
+            false,
+            true,
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+                },
+                "required": ["query"],
+                "additionalProperties": false,
+            })),
+        ),
+        tool_full(
+            "models_files",
+            "List the GGUF files of a Hugging Face repo (owner/name), with quantizations and sizes.",
+            true,
+            false,
+            true,
+            schema(json!({
+                "type": "object",
+                "properties": { "repo": { "type": "string" } },
+                "required": ["repo"],
+                "additionalProperties": false,
+            })),
+        ),
+        tool_full(
+            "secrets_set",
+            "Store a secret in the app vault (e.g. hf_token for plugin runs). Write-only: the value is never returned by any tool.",
+            false,
+            false,
+            true,
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "value": { "type": "string" },
+                },
+                "required": ["name", "value"],
+                "additionalProperties": false,
+            })),
+        ),
+        tool_full(
+            "secrets_has",
+            "Whether a secret with this name is stored. Boolean only — values are never read back.",
+            true,
+            false,
+            true,
+            schema(json!({
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"],
+                "additionalProperties": false,
+            })),
+        ),
+        tool_full(
+            "secrets_delete",
+            "Delete a stored secret by name.",
+            false,
+            true,
+            true,
+            schema(json!({
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"],
+                "additionalProperties": false,
+            })),
+        ),
+        tool(
+            "colab_update_check",
+            "Whether a newer Colab Playground release is published. Informational only — the server never updates itself on an agent's say-so.",
+            true,
+        ),
     ]
+}
+
+/// The caller's progress token, if the request carried one.
+fn progress_token(request: &CallToolRequestParams) -> Option<ProgressToken> {
+    request.meta.as_ref().and_then(|m| m.get_progress_token())
+}
+
+fn describe_tunnel_event(event: &TunnelEvent) -> String {
+    match event {
+        TunnelEvent::State { state, .. } => {
+            let tag = serde_json::to_value(state)
+                .ok()
+                .and_then(|v| v["state"].as_str().map(str::to_string))
+                .unwrap_or_else(|| "changed".to_string());
+            format!("tunnel: {tag}")
+        }
+        TunnelEvent::Health { healthy, .. } => {
+            format!("tunnel health: {}", if *healthy { "ok" } else { "failing" })
+        }
+    }
+}
+
+fn describe_plugin_event(event: &PluginRunEvent) -> String {
+    match event {
+        PluginRunEvent::Provision(e) => {
+            let tag = serde_json::to_value(e)
+                .ok()
+                .and_then(|v| v["event"].as_str().map(str::to_string))
+                .unwrap_or_else(|| "working".to_string());
+            format!("provisioning: {tag}")
+        }
+        PluginRunEvent::Launched { session, run_id } => {
+            format!("launched {run_id} on {session}")
+        }
+        PluginRunEvent::Status(status) => {
+            format!(
+                "status: {}",
+                serde_json::to_string(status).unwrap_or_default()
+            )
+        }
+        PluginRunEvent::Log { lines } => lines.join("\n"),
+    }
+}
+
+fn parse_port(args: &Map<String, Value>, field: &str) -> Result<u16, CoreError> {
+    match get_u64(args, field) {
+        Some(p) if (1..=65535).contains(&p) => Ok(p as u16),
+        Some(_) => Err(CoreError::invalid(
+            field,
+            format!("{field} must be 1-65535"),
+        )),
+        None => Err(CoreError::invalid(field, format!("{field} is required"))),
+    }
+}
+
+fn parse_tunnel_spec(args: &Map<String, Value>) -> Result<TunnelSpec, CoreError> {
+    Ok(TunnelSpec {
+        account: AccountId::new(req_str(args, "account")?)?,
+        session: req_str(args, "session")?.to_string(),
+        local_port: parse_port(args, "local_port")?,
+        remote_port: parse_port(args, "remote_port")?,
+        health_path: get_str(args, "health_path").map(str::to_string),
+    })
+}
+
+fn json_input(field: &str, value: &Value) -> Result<InputValue, CoreError> {
+    match value {
+        Value::Bool(b) => Ok(InputValue::Bool(*b)),
+        Value::Number(n) => Ok(InputValue::Number(n.as_f64().unwrap_or_default())),
+        Value::String(s) => Ok(InputValue::Text(s.clone())),
+        _ => Err(CoreError::invalid(
+            "inputs",
+            format!("input {field:?} must be a string, number or boolean"),
+        )),
+    }
 }
 
 /// The tool call's arguments as an object (absent means empty).
@@ -435,6 +699,40 @@ fn parse_ref(args: &Map<String, Value>) -> Result<RuntimeRef, CoreError> {
 
 /// A core success as a tool result: the value as structured content, plus the
 /// same JSON as text for hosts that only read text content.
+/// Awaits a blocking backend call while draining its event channel. The
+/// channel is polled, never joined on: a backend may keep the event sender
+/// alive past the call (the real tunnel manager retains it for the tunnel's
+/// lifetime), so waiting for the stream to disconnect would hang the tool
+/// call. Dropping our receiver is safe — the core ignores a failed send.
+async fn join_with_events<T, E>(
+    mut joined: tokio::task::JoinHandle<Result<T, CoreError>>,
+    events_rx: std::sync::mpsc::Receiver<E>,
+    mut notify: impl FnMut(&E),
+) -> Result<T, CoreError> {
+    let result = loop {
+        tokio::select! {
+            outcome = &mut joined => {
+                // The call may have emitted events just before returning,
+                // before any poll tick ran; deliver those before finishing.
+                while let Ok(event) = events_rx.try_recv() {
+                    notify(&event);
+                }
+                break outcome;
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {
+                while let Ok(event) = events_rx.try_recv() {
+                    notify(&event);
+                }
+            }
+        }
+    };
+    drop(events_rx);
+    match result {
+        Ok(result) => result,
+        Err(e) => Err(CoreError::new(ErrorKind::Other).detail(format!("backend task: {e}"))),
+    }
+}
+
 fn success(value: Value) -> CallToolResult {
     let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
     let mut result = CallToolResult::success(vec![ContentBlock::text(text)]);
@@ -653,6 +951,242 @@ impl ServerHandler for McpServer {
                 })),
                 Err(e) => failure(&e),
             },
+            "tunnels_list" => {
+                let tunnels = self.backend.tunnels();
+                success(json!({ "tunnels": tunnels }))
+            }
+            "tunnels_open" => {
+                let args = args(&request);
+                match parse_tunnel_spec(&args).and_then(|spec| spec.validate().map(|()| spec)) {
+                    Ok(spec) => {
+                        let local_url = spec.local_url();
+                        match self
+                            .run_with_events(
+                                &context,
+                                progress_token(&request),
+                                describe_tunnel_event,
+                                move |backend, events, _cancel| backend.open_tunnel(spec, events),
+                            )
+                            .await
+                        {
+                            Ok(id) => {
+                                // The real backend returns once the tunnel
+                                // thread is spawned, while the tunnel may
+                                // still be coming up; wait for it to settle
+                                // (or about a minute) before reporting.
+                                let deadline =
+                                    std::time::Instant::now() + std::time::Duration::from_secs(60);
+                                let mut info = None;
+                                while std::time::Instant::now() < deadline {
+                                    let found =
+                                        self.backend.tunnels().into_iter().find(|t| t.id == id);
+                                    let settled = found.as_ref().is_some_and(|t| {
+                                        matches!(
+                                            t.state,
+                                            TunnelState::Up | TunnelState::Failed { .. }
+                                        )
+                                    });
+                                    info = found;
+                                    if settled {
+                                        break;
+                                    }
+                                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                                }
+                                success(json!({
+                                    "tunnel_id": id,
+                                    "local_url": local_url,
+                                    "tunnel": info,
+                                }))
+                            }
+                            Err(e) => failure(&e),
+                        }
+                    }
+                    Err(e) => failure(&e),
+                }
+            }
+            "tunnels_close" => {
+                let args = args(&request);
+                match get_u64(&args, "tunnel_id")
+                    .ok_or_else(|| CoreError::invalid("tunnel_id", "tunnel_id is required"))
+                {
+                    Ok(id) => match self
+                        .run(&context, move |backend, _cancel| {
+                            backend.close_tunnel(TunnelId(id))
+                        })
+                        .await
+                    {
+                        Ok(()) => success(json!({ "closed": true, "tunnel_id": id })),
+                        Err(e) => failure(&e),
+                    },
+                    Err(e) => failure(&e),
+                }
+            }
+            "plugins_list" => {
+                let plugins = self.backend.plugins();
+                success(json!({ "plugins": plugins }))
+            }
+            "plugins_run" => {
+                let args = args(&request);
+                match req_str(&args, "plugin").and_then(|plugin| {
+                    req_str(&args, "session")
+                        .map(|session| (plugin.to_string(), session.to_string()))
+                }) {
+                    Ok((plugin, session)) => {
+                        let template = self
+                            .run(&context, move |backend, _cancel| {
+                                backend.plugin_run_template(&plugin)
+                            })
+                            .await;
+                        match template {
+                            Ok(mut spec) => {
+                                spec.target = RunTarget::Existing { name: session };
+                                let mut inputs_ok = Ok(());
+                                if let Some(overrides) =
+                                    args.get("inputs").and_then(Value::as_object)
+                                {
+                                    for (key, value) in overrides {
+                                        match json_input(key, value) {
+                                            Ok(input) => {
+                                                spec.inputs.insert(key.clone(), input);
+                                            }
+                                            Err(e) => {
+                                                inputs_ok = Err(e);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                match inputs_ok {
+                                    Ok(()) => match self
+                                        .run_with_events(
+                                            &context,
+                                            progress_token(&request),
+                                            describe_plugin_event,
+                                            move |backend, events, cancel| {
+                                                backend.run_plugin(spec, events, cancel)
+                                            },
+                                        )
+                                        .await
+                                    {
+                                        Ok(outcome) => success(
+                                            serde_json::to_value(outcome).unwrap_or(Value::Null),
+                                        ),
+                                        Err(e) => failure(&e),
+                                    },
+                                    Err(e) => failure(&e),
+                                }
+                            }
+                            Err(e) => failure(&e),
+                        }
+                    }
+                    Err(e) => failure(&e),
+                }
+            }
+            "models_search" => {
+                let args = args(&request);
+                match req_str(&args, "query") {
+                    Ok(query) => {
+                        let query = query.to_string();
+                        let limit = get_u64(&args, "limit").unwrap_or(20).clamp(1, 100) as u32;
+                        match self
+                            .run(&context, move |backend, cancel| {
+                                backend.hf_search(&query, limit, cancel)
+                            })
+                            .await
+                        {
+                            Ok(models) => success(json!({ "models": models })),
+                            Err(e) => failure(&e),
+                        }
+                    }
+                    Err(e) => failure(&e),
+                }
+            }
+            "models_files" => {
+                let args = args(&request);
+                match req_str(&args, "repo") {
+                    Ok(repo) => {
+                        let repo = repo.to_string();
+                        match self
+                            .run(&context, move |backend, cancel| {
+                                backend.hf_files(&repo, cancel)
+                            })
+                            .await
+                        {
+                            Ok(listing) => {
+                                success(serde_json::to_value(listing).unwrap_or(Value::Null))
+                            }
+                            Err(e) => failure(&e),
+                        }
+                    }
+                    Err(e) => failure(&e),
+                }
+            }
+            "secrets_set" => {
+                let args = args(&request);
+                match req_str(&args, "name").and_then(|name| {
+                    req_str(&args, "value").map(|value| (name.to_string(), value.to_string()))
+                }) {
+                    Ok((name, value)) => {
+                        let label = name.clone();
+                        match self
+                            .run(&context, move |backend, cancel| {
+                                backend.set_secret(&name, &value, cancel)
+                            })
+                            .await
+                        {
+                            // The value is never echoed back.
+                            Ok(()) => success(json!({ "name": label, "stored": true })),
+                            Err(e) => failure(&e),
+                        }
+                    }
+                    Err(e) => failure(&e),
+                }
+            }
+            "secrets_has" => {
+                let args = args(&request);
+                match req_str(&args, "name") {
+                    Ok(name) => {
+                        let name = name.to_string();
+                        let label = name.clone();
+                        match self
+                            .run(&context, move |backend, cancel| {
+                                backend.has_secret(&name, cancel)
+                            })
+                            .await
+                        {
+                            Ok(present) => success(json!({ "name": label, "present": present })),
+                            Err(e) => failure(&e),
+                        }
+                    }
+                    Err(e) => failure(&e),
+                }
+            }
+            "secrets_delete" => {
+                let args = args(&request);
+                match req_str(&args, "name") {
+                    Ok(name) => {
+                        let name = name.to_string();
+                        let label = name.clone();
+                        match self
+                            .run(&context, move |backend, cancel| {
+                                backend.delete_secret(&name, cancel)
+                            })
+                            .await
+                        {
+                            Ok(()) => success(json!({ "name": label, "deleted": true })),
+                            Err(e) => failure(&e),
+                        }
+                    }
+                    Err(e) => failure(&e),
+                }
+            }
+            "colab_update_check" => match self
+                .run(&context, |backend, cancel| backend.check_for_update(cancel))
+                .await
+            {
+                Ok(status) => success(serde_json::to_value(status).unwrap_or(Value::Null)),
+                Err(e) => failure(&e),
+            },
             other => {
                 return Err(McpError::new(
                     ErrorCode::METHOD_NOT_FOUND,
@@ -719,5 +1253,37 @@ mod tests {
             assert!(error.is(ErrorKind::InvalidInput));
             assert_eq!(error.param("field"), Some(field), "{field}");
         }
+    }
+
+    /// Regression test for the Codex P1 on PR #18: the real tunnel manager
+    /// keeps the event sender alive for the tunnel's lifetime, so a bridge
+    /// that joins on the event stream disconnecting hangs `tunnels_open`
+    /// forever. The bridge must return as soon as the call does, while
+    /// still delivering the events the call did emit.
+    #[tokio::test]
+    async fn a_retained_event_sender_does_not_hang_the_bridge() {
+        let (tx, rx) = std::sync::mpsc::channel::<u32>();
+        // A holder thread keeps a sender clone alive long after the call
+        // returns, like the real tunnel manager does.
+        let holder = tx.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            drop(holder);
+        });
+        let joined = tokio::task::spawn_blocking(move || {
+            tx.send(1).unwrap();
+            tx.send(2).unwrap();
+            drop(tx);
+            Ok::<u32, CoreError>(7)
+        });
+        let mut seen = Vec::new();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            join_with_events(joined, rx, |event| seen.push(*event)),
+        )
+        .await;
+        assert!(result.is_ok(), "the bridge returned before the timeout");
+        assert_eq!(result.unwrap().unwrap(), 7);
+        assert_eq!(seen, vec![1, 2]);
     }
 }
