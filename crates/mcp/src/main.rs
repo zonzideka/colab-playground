@@ -8,6 +8,7 @@
 //! (see core's `driver_lock`), so a GUI already running — or another
 //! server — makes this process fail fast instead of sharing the ledger.
 
+mod ops;
 mod server;
 
 use std::{process::ExitCode, sync::Arc, time::Duration};
