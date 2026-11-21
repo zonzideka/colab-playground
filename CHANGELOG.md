@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/zonzideka/colab-playground/compare/v0.3.0...v0.3.1) (2026-11-21)
+
+
+### Fixed
+
+* **core:** keep a pending stop's reason until the endpoint is confirmed gone ([#12](https://github.com/zonzideka/colab-playground/issues/12)) ([abb6c19](https://github.com/zonzideka/colab-playground/commit/abb6c1973031becf92d21f1faf45f28de37bb9b1))
+
 ## [0.3.0](https://github.com/zonzideka/colab-playground/compare/v0.2.3...v0.3.0) (2026-11-20)
 
 
