@@ -356,6 +356,16 @@ fn the_mock_server_runs_a_session_lifecycle_over_stdio() {
         extended["result"]["structuredContent"]["watchdog"]["armed"],
         json!(true)
     );
+    // The extension adds to the time left: the new deadline is later than
+    // the one provisioning set (900 s cap + 600 s added, roughly).
+    let started_deadline = view["result"]["watchdog"]["deadline"].as_u64().unwrap();
+    let extended_deadline = extended["result"]["structuredContent"]["watchdog"]["deadline"]
+        .as_u64()
+        .unwrap();
+    assert!(
+        extended_deadline > started_deadline,
+        "extend moved the deadline earlier: {started_deadline} -> {extended_deadline}"
+    );
 
     let guard = client.call_tool("guard_poll");
     assert_eq!(guard["result"]["isError"], json!(false));

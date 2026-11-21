@@ -606,9 +606,26 @@ impl ServerHandler for McpServer {
                             "endpoint": target.endpoint,
                             "name": target.name,
                         });
+                        let additional = Duration::from_secs(secs);
                         match self
                             .run(&context, move |backend, cancel| {
-                                backend.extend_session(&target, Duration::from_secs(secs), cancel)
+                                // The core sets the deadline to `runtime`
+                                // from now; the tool promises added time,
+                                // so fold in what is left on the current
+                                // deadline first (the conversion the GUI
+                                // applies). Without it an "extension"
+                                // shorter than the remaining time would
+                                // move the stop earlier.
+                                let now = backend.now();
+                                let remaining = backend
+                                    .runtimes(cancel)?
+                                    .runtimes
+                                    .iter()
+                                    .find(|r| r.id == target)
+                                    .and_then(|r| r.auto_stop_at)
+                                    .and_then(|at| at.duration_since(now).ok())
+                                    .unwrap_or_default();
+                                backend.extend_session(&target, remaining + additional, cancel)
                             })
                             .await
                         {

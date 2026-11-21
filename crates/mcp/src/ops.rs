@@ -13,6 +13,8 @@
 //! watchdog is confirmed armed: in v1 the VM watchdog is the only guard,
 //! so a session without it is a failed operation (the session itself is
 //! named in the error, so the caller can stop it or extend it to arm one).
+//! Likewise, a cancelled operation whose cleanup failed reports that
+//! failure, not a bare "cancelled": the runtime may still be billing.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -103,9 +105,11 @@ impl Operation {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         *state = match result {
             Ok(value) => OpState::Succeeded(value),
-            Err(e) if self.cancel.is_cancelled() || e.is(ErrorKind::Cancelled) => {
-                OpState::Cancelled
-            }
+            Err(e) if e.is(ErrorKind::Cancelled) => OpState::Cancelled,
+            // Any other error stays visible even when a cancel was
+            // requested: a rollback that could not confirm the runtime
+            // stopped (orphan_suspected) means a VM may still be billing,
+            // and calling that a plain "cancelled" would hide it.
             Err(e) => OpState::Failed(error_body(&e)),
         };
     }
@@ -362,6 +366,35 @@ mod tests {
             .filter(|r| r.managed && r.id.name.as_deref() == Some(first.name.as_str()))
             .count();
         assert_eq!(managed, 1);
+    }
+
+    #[test]
+    fn a_failed_cleanup_after_a_cancel_is_reported_not_masked() {
+        let backend = mock_backend(StdDuration::ZERO);
+        let account = backend
+            .accounts(&CancelToken::new())
+            .unwrap()
+            .active
+            .unwrap();
+        let op = Operation {
+            id: "op-test".into(),
+            request_id: "req-orphan".into(),
+            account,
+            name: "test-orphan".into(),
+            max_runtime_secs: 900,
+            cancel: CancelToken::new(),
+            state: Mutex::new(OpState::Running {
+                stage: "releasing".into(),
+                last_event: None,
+            }),
+        };
+        op.cancel.cancel();
+        op.finish(Err(CoreError::new(ErrorKind::OrphanSuspected)
+            .with("endpoint", "m-xxxx")
+            .detail("the runtime could not be confirmed stopped")));
+        let view = op.view();
+        assert_eq!(view["state"], json!("failed"), "{view}");
+        assert_eq!(view["error"]["code"], json!("orphan_suspected"));
     }
 
     #[test]
