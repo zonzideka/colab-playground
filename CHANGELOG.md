@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/zonzideka/colab-playground/compare/v0.3.1...v0.4.0) (2026-11-21)
+
+
+### Added
+
+* **mcp:** add the colab-playground-mcp server with the read-only tools ([#14](https://github.com/zonzideka/colab-playground/issues/14)) ([d334abd](https://github.com/zonzideka/colab-playground/commit/d334abd82447033562bf2e0b7b07cb7948de0c55))
+
 ## [0.3.1](https://github.com/zonzideka/colab-playground/compare/v0.3.0...v0.3.1) (2026-11-21)
 
 
