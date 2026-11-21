@@ -3,7 +3,7 @@
 Status: open questions decided by the user on 2026-11-20, adopting the local
 agent's (zonzi's) caller-side review on every point (see section 7).
 Implemented so far: rollout step 2 (2026-11-21) — the `colab-playground-mcp`
-crate with the read-only tools (`colab_status`, `accounts_list`,
+crate with the first tools (`colab_status`, `accounts_list`,
 `usage_get`, `usage_refresh`, `sessions_list`) over stdio, against the mock
 and the real backend, with the section 5 driver lock. Session lifecycle
 tools and the rest follow the rollout in section 8.
@@ -70,7 +70,7 @@ action plus an account pinned, a policy enforced and a ledger entry written.
 | Tool | Core call | Notes |
 | --- | --- | --- |
 | `colab_status` | `probe` | CLI presence/version, backend kind, data-dir state. |
-| `accounts_list` | `accounts` | Ids, emails, which account is active. |
+| `accounts_list` | `accounts` | Ids, emails, which account is active. Not annotated read-only: the query can complete an interrupted add-account rollback, which can restore or clear the CLI's active credential (see section 6). |
 | `accounts_switch` | `switch_impact` + `switch_account` | Impact is checked first; switching away from an account with live sessions is refused unless `force` is set. |
 | `accounts_remove` | `remove_account` | Destructive; see annotations. |
 
@@ -231,15 +231,31 @@ state is actually used (one human, one machine) and avoids split-brain
 ledger writes. Revisit only if a real need for simultaneous drivers shows
 up. The per-account CLI state file keeps its own locking, unchanged.
 
+As implemented (2026-11-21): the lock lives in core — `RealBackend::new`
+acquires it through the `driver_lock` registry, which shares it within a
+process (so the GUI's in-place backend rebuild never fights itself) and
+fails a second process with the `driver_already_running` kind; the GUI
+surfaces that as its own error message, the server prints it and exits.
+Known gap: the server does not yet read the GUI's saved host configuration
+(a non-default WSL distribution or explicit CLI/interpreter paths chosen
+in Settings); it uses automatic discovery and the default distribution.
+That parity belongs in core, next to the settings store, and is a
+follow-up — it only affects Windows setups that changed those settings.
+
 ## 6. Annotations and safety
 
-- Read-only tools (`colab_status`, `accounts_list`, `usage_get`,
+- Read-only tools (`colab_status`, `usage_get`,
   `tunnels_list`, `plugins_list`, `models_*`, `secrets_has`,
   `colab_update_check`) are annotated read-only.
 - `sessions_list` is **not** annotated read-only: the core's listing path
   reconciles against the server and can write the ledger (recording a
   session that ended, finalising a pending stop). The same applies to any
   future tool whose core call reconciles.
+- `accounts_list` is **not** annotated read-only either: when a previous
+  add-account flow was interrupted, the accounts query completes its
+  rollback before answering, and that rollback can restore or clear the
+  CLI's active credential. (A code review caught the first implementation
+  claiming otherwise; the tool description says this out loud.)
 - Destructive tools (`accounts_remove`, `sessions_stop`,
   `secrets_delete`) are annotated destructive so agent hosts can ask the
   user first.

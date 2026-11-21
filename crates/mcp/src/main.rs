@@ -4,15 +4,16 @@
 //! The server binds nothing and opens no ports; it serves only the process
 //! that spawned it. With the real backend it shares the app's data
 //! directory (accounts, ledger, plugins), so state is continuous with the
-//! GUI, and it takes the driver lock there first (see `lock`).
+//! GUI; the backend itself takes the one-driver lock for that directory
+//! (see core's `driver_lock`), so a GUI already running — or another
+//! server — makes this process fail fast instead of sharing the ledger.
 
-mod lock;
 mod server;
 
 use std::{process::ExitCode, sync::Arc, time::Duration};
 
 use colab_playground_core::{
-    Defaults, SystemClock,
+    Defaults, ErrorKind, SystemClock,
     backend::Backend,
     mock::{MockBackend, MockConfig, MockFailures, MockScenario},
     paths,
@@ -20,7 +21,6 @@ use colab_playground_core::{
 };
 use rmcp::{service::ServiceExt, transport::stdio};
 
-use lock::DriverLock;
 use server::McpServer;
 
 /// Environment variable that picks the backend when no flag is given
@@ -103,8 +103,6 @@ async fn main() -> ExitCode {
         }
     };
 
-    // The lock is held for the whole serve: keep it bound until main returns.
-    let mut _lock: Option<DriverLock> = None;
     let (backend, label, data_dir): (Arc<dyn Backend>, &'static str, Option<_>) = match choice {
         BackendChoice::Mock => (mock_backend(), "mock", None),
         BackendChoice::Real => {
@@ -112,13 +110,6 @@ async fn main() -> ExitCode {
                 eprintln!("no data directory on this system");
                 return ExitCode::FAILURE;
             };
-            match DriverLock::acquire(&data_dir) {
-                Ok(lock) => _lock = Some(lock),
-                Err(e) => {
-                    eprintln!("{e}");
-                    return ExitCode::FAILURE;
-                }
-            }
             let config = match RealConfig::for_app(Defaults::default()) {
                 Ok(config) => config,
                 Err(e) => {
@@ -128,6 +119,13 @@ async fn main() -> ExitCode {
             };
             match RealBackend::new(config) {
                 Ok(backend) => (Arc::new(backend), "real", Some(data_dir)),
+                Err(e) if e.is(ErrorKind::DriverAlreadyRunning) => {
+                    // The design's fail-fast, in the design's words: the
+                    // slug is the stable part an operator (or a script)
+                    // matches on.
+                    eprintln!("driver_already_running: {}", e.detail);
+                    return ExitCode::FAILURE;
+                }
                 Err(e) => {
                     eprintln!("backend setup failed: {}", e.detail);
                     return ExitCode::FAILURE;

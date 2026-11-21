@@ -567,6 +567,9 @@ struct Inner {
     login_active: AtomicBool,
     /// Keeps WSL up between commands, so its keyring stays unlocked (see [`HostKeepalive`]).
     keepalive: HostKeepalive,
+    /// The one-driver lock for the data directory (see [`crate::driver_lock`]);
+    /// held for the backend's lifetime.
+    _driver_guard: Arc<crate::driver_lock::DriverGuard>,
 }
 
 #[derive(Clone)]
@@ -595,6 +598,10 @@ impl RealBackend {
     /// Loads app-side files; spawns nothing.
     pub fn new(cfg: RealConfig) -> Result<RealBackend> {
         std::fs::create_dir_all(&cfg.local_dir)?;
+        // One driver per data directory: a second process (the GUI next to
+        // an MCP server, or two servers) fails here, before any state is
+        // loaded, instead of overwriting this backend's saves later.
+        let driver_guard = crate::driver_lock::acquire_driver_lock(&cfg.local_dir)?;
         let probe_layout = DataLayout::new(cfg.local_dir.clone(), HostPath::new("/"));
         let state = State {
             accounts: AccountStore::load(&probe_layout.accounts_json())?,
@@ -619,6 +626,7 @@ impl RealBackend {
                 state: Mutex::new(state),
                 tunnels: TunnelManager::new(),
                 login_active: AtomicBool::new(false),
+                _driver_guard: driver_guard,
             }),
         })
     }

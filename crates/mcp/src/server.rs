@@ -108,8 +108,8 @@ fn tools() -> Vec<Tool> {
         ),
         tool(
             "accounts_list",
-            "Saved accounts, which one is active, and the state of the CLI credential slot.",
-            true,
+            "Saved accounts, which one is active, and the state of the CLI credential slot. Not read-only: if an earlier add-account flow was interrupted, listing first completes its rollback, which can restore or clear the CLI's active credential.",
+            false,
         ),
         tool(
             "usage_get",

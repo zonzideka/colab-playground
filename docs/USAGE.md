@@ -71,11 +71,13 @@ stdio and opens no ports.
   `usage_refresh`, `sessions_list`. Session start/stop and the rest of the
   design in [the MCP design](mcp-design.md) are not in yet.
 - The server shares the app's data directory, so state is continuous with
-  the GUI. Because both write the ledger, only one driver may hold the data
-  directory at a time: a second server process exits with
-  `driver_already_running` instead of starting.
+  the GUI. Because both write the ledger, only one driver — the app or a
+  server process — may hold the data directory at a time: a second one
+  fails with `driver_already_running` instead of starting.
 - Sign-in stays in the GUI: the server works with the accounts you already
-  added there.
+  added there. It also does not read the GUI's saved CLI-path or WSL
+  distribution settings yet; it finds the CLI automatically and uses the
+  default WSL distribution.
 
 ## Requirements
 

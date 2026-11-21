@@ -56,6 +56,10 @@ pub enum ErrorKind {
     /// (`gnome-keyring-daemon` is missing), so there is no keyring to
     /// unlock; installing the provider is the fix.
     KeyringNotInstalled,
+    /// Another process already drives this data directory (the GUI or an
+    /// MCP server); two drivers would overwrite each other's ledger.
+    /// Params: `path`, optionally `pid`.
+    DriverAlreadyRunning,
     /// A previous add-account flow was interrupted; roll it back first.
     AddInProgress,
     /// The CLI still has a legacy plaintext token file; it would be migrated
@@ -149,6 +153,7 @@ impl ErrorKind {
             ErrorKind::AccountNotFound => "account_not_found",
             ErrorKind::KeyringUnavailable => "keyring_unavailable",
             ErrorKind::KeyringNotInstalled => "keyring_not_installed",
+            ErrorKind::DriverAlreadyRunning => "driver_already_running",
             ErrorKind::AddInProgress => "add_in_progress",
             ErrorKind::LegacyTokenPresent => "legacy_token_present",
             ErrorKind::LoginCancelled => "login_cancelled",
@@ -190,6 +195,7 @@ impl ErrorKind {
                 NextStep::SignInAgain
             }
             K::LoginInvalidCode | K::LoginCancelled | K::AddInProgress => NextStep::TryAgain,
+            K::DriverAlreadyRunning => NextStep::TryAgain,
             K::NotEntitled | K::ProvisionExhausted | K::AllocationTimeout => {
                 NextStep::ChooseOtherAccelerator
             }

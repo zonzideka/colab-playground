@@ -211,13 +211,24 @@ jobs:
           echo "ASSET=$BASE.zip" >> "$GITHUB_ENV"
 
       # One artifact per file, stored as the file itself: a dry run's artifacts are exactly the
-      # files a release gets. (Windows stages two files: the app and the MCP server.)
+      # files a release gets.
       - uses: actions/upload-artifact@v7
         with:
-          path: dist/*
+          path: dist/${{ env.ASSET }}
           archive: false
           if-no-files-found: error
           overwrite: true # a re-run of this job replaces its file
+
+      # Windows ships the MCP server as its own bare exe (on Linux and macOS
+      # it rides inside the archive). archive:false takes a single file, so
+      # it gets its own step.
+      - if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/${{ env.MCP_BASE }}.exe
+          archive: false
+          if-no-files-found: error
+          overwrite: true
 
   checksums:
     name: SHA256SUMS

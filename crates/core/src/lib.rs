@@ -8,6 +8,7 @@ pub mod backend;
 pub mod cli;
 pub mod clock;
 pub mod defaults;
+pub mod driver_lock;
 pub mod error;
 pub mod guard;
 pub mod hf;

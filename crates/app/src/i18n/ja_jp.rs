@@ -533,6 +533,10 @@ pub(super) const MESSAGES: Messages = &[
         ERR_KEYRING_NOT_INSTALLED,
         "キーリングサービスがインストールされていません。Ubuntu/Debian では次のコマンドでインストールし、アプリを再起動してください: sudo apt install gnome-keyring",
     ),
+    (
+        ERR_DRIVER_ALREADY_RUNNING,
+        "別の Colab Playground ウィンドウまたは MCP サーバーがこのデータを既に使用しています。もう一方を閉じてから再試行してください。",
+    ),
     (ERR_ADD_IN_PROGRESS, "別のログインがまだ進行中です。"),
     (
         ERR_LEGACY_TOKEN,

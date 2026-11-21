@@ -122,10 +122,11 @@ fn the_mock_server_answers_the_v1_read_tools_over_stdio() {
             .and_then(|t| t["annotations"]["readOnlyHint"].as_bool())
     };
     assert_eq!(read_only("colab_status"), Some(true));
-    assert_eq!(read_only("accounts_list"), Some(true));
     assert_eq!(read_only("usage_get"), Some(true));
-    // Refreshing fetches, and listing reconciles (it can write the ledger):
-    // neither may claim to be read-only.
+    // Refreshing fetches, listing reconciles (it can write the ledger), and
+    // the account query can complete an interrupted add-account rollback:
+    // none of them may claim to be read-only.
+    assert_eq!(read_only("accounts_list"), Some(false));
     assert_eq!(read_only("usage_refresh"), Some(false));
     assert_eq!(read_only("sessions_list"), Some(false));
 
