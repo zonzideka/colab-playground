@@ -14,7 +14,7 @@ use colab_playground_core::{
     plugins::InputValue,
     provision::ProvisionSpec,
     sessions::Accelerator,
-    tunnel::{TunnelEvent, TunnelId, TunnelSpec},
+    tunnel::{TunnelEvent, TunnelId, TunnelSpec, TunnelState},
 };
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
@@ -113,43 +113,29 @@ impl McpServer {
             })
         };
         let (events_tx, events_rx) = std::sync::mpsc::channel::<E>();
-        let (fwd_tx, mut fwd_rx) = tokio::sync::mpsc::unbounded_channel::<E>();
-        let forwarder = std::thread::spawn(move || {
-            while let Ok(event) = events_rx.recv() {
-                if fwd_tx.send(event).is_err() {
-                    return;
-                }
-            }
-        });
         let backend = self.backend.clone();
-        let mut joined =
-            tokio::task::spawn_blocking(move || call(backend.as_ref(), events_tx, &token));
+        let joined = tokio::task::spawn_blocking(move || call(backend.as_ref(), events_tx, &token));
         let mut progress: f64 = 0.0;
-        let result = loop {
-            tokio::select! {
-                event = fwd_rx.recv() => {
-                    if let Some(event) = event {
-                        progress += 1.0;
-                        if let Some(pt) = &progress_token {
-                            let _ = context
-                                .peer
-                                .notify_progress(
-                                    ProgressNotificationParam::new(pt.clone(), progress)
-                                        .with_message(describe(&event)),
-                                )
-                                .await;
-                        }
-                    }
-                }
-                outcome = &mut joined => break outcome,
+        let result = join_with_events(joined, events_rx, |event| {
+            progress += 1.0;
+            if let Some(pt) = &progress_token {
+                let message = describe(event);
+                let peer = context.peer.clone();
+                let pt = pt.clone();
+                let n = progress;
+                // Notifications must not wait on the bridge loop.
+                tokio::spawn(async move {
+                    let _ = peer
+                        .notify_progress(
+                            ProgressNotificationParam::new(pt, n).with_message(message),
+                        )
+                        .await;
+                });
             }
-        };
+        })
+        .await;
         watcher.abort();
-        let _ = forwarder.join();
-        match result {
-            Ok(result) => result,
-            Err(e) => Err(CoreError::new(ErrorKind::Other).detail(format!("backend task: {e}"))),
-        }
+        result
     }
 
     fn status(&self) -> Value {
@@ -417,7 +403,7 @@ fn tools() -> Vec<Tool> {
         tool("tunnels_list", "Open port forwards and their state.", false),
         tool_full(
             "tunnels_open",
-            "Open a port forward to a session (the session's account must be active). Returns once the tunnel is up or has failed; progress notifications carry state changes when the caller supplies a progress token.",
+            "Open a port forward to a session (the session's account must be active). Returns once the tunnel is up or has failed — or after about a minute, with its current state (poll tunnels_list then). Progress notifications carry state changes when the caller supplies a progress token.",
             false,
             false,
             false,
@@ -713,6 +699,40 @@ fn parse_ref(args: &Map<String, Value>) -> Result<RuntimeRef, CoreError> {
 
 /// A core success as a tool result: the value as structured content, plus the
 /// same JSON as text for hosts that only read text content.
+/// Awaits a blocking backend call while draining its event channel. The
+/// channel is polled, never joined on: a backend may keep the event sender
+/// alive past the call (the real tunnel manager retains it for the tunnel's
+/// lifetime), so waiting for the stream to disconnect would hang the tool
+/// call. Dropping our receiver is safe — the core ignores a failed send.
+async fn join_with_events<T, E>(
+    mut joined: tokio::task::JoinHandle<Result<T, CoreError>>,
+    events_rx: std::sync::mpsc::Receiver<E>,
+    mut notify: impl FnMut(&E),
+) -> Result<T, CoreError> {
+    let result = loop {
+        tokio::select! {
+            outcome = &mut joined => {
+                // The call may have emitted events just before returning,
+                // before any poll tick ran; deliver those before finishing.
+                while let Ok(event) = events_rx.try_recv() {
+                    notify(&event);
+                }
+                break outcome;
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {
+                while let Ok(event) = events_rx.try_recv() {
+                    notify(&event);
+                }
+            }
+        }
+    };
+    drop(events_rx);
+    match result {
+        Ok(result) => result,
+        Err(e) => Err(CoreError::new(ErrorKind::Other).detail(format!("backend task: {e}"))),
+    }
+}
+
 fn success(value: Value) -> CallToolResult {
     let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
     let mut result = CallToolResult::success(vec![ContentBlock::text(text)]);
@@ -950,7 +970,28 @@ impl ServerHandler for McpServer {
                             .await
                         {
                             Ok(id) => {
-                                let info = self.backend.tunnels().into_iter().find(|t| t.id == id);
+                                // The real backend returns once the tunnel
+                                // thread is spawned, while the tunnel may
+                                // still be coming up; wait for it to settle
+                                // (or about a minute) before reporting.
+                                let deadline =
+                                    std::time::Instant::now() + std::time::Duration::from_secs(60);
+                                let mut info = None;
+                                while std::time::Instant::now() < deadline {
+                                    let found =
+                                        self.backend.tunnels().into_iter().find(|t| t.id == id);
+                                    let settled = found.as_ref().is_some_and(|t| {
+                                        matches!(
+                                            t.state,
+                                            TunnelState::Up | TunnelState::Failed { .. }
+                                        )
+                                    });
+                                    info = found;
+                                    if settled {
+                                        break;
+                                    }
+                                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                                }
                                 success(json!({
                                     "tunnel_id": id,
                                     "local_url": local_url,
@@ -1212,5 +1253,37 @@ mod tests {
             assert!(error.is(ErrorKind::InvalidInput));
             assert_eq!(error.param("field"), Some(field), "{field}");
         }
+    }
+
+    /// Regression test for the Codex P1 on PR #18: the real tunnel manager
+    /// keeps the event sender alive for the tunnel's lifetime, so a bridge
+    /// that joins on the event stream disconnecting hangs `tunnels_open`
+    /// forever. The bridge must return as soon as the call does, while
+    /// still delivering the events the call did emit.
+    #[tokio::test]
+    async fn a_retained_event_sender_does_not_hang_the_bridge() {
+        let (tx, rx) = std::sync::mpsc::channel::<u32>();
+        // A holder thread keeps a sender clone alive long after the call
+        // returns, like the real tunnel manager does.
+        let holder = tx.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            drop(holder);
+        });
+        let joined = tokio::task::spawn_blocking(move || {
+            tx.send(1).unwrap();
+            tx.send(2).unwrap();
+            drop(tx);
+            Ok::<u32, CoreError>(7)
+        });
+        let mut seen = Vec::new();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            join_with_events(joined, rx, |event| seen.push(*event)),
+        )
+        .await;
+        assert!(result.is_ok(), "the bridge returned before the timeout");
+        assert_eq!(result.unwrap().unwrap(), 7);
+        assert_eq!(seen, vec![1, 2]);
     }
 }
