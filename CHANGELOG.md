@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/zonzideka/colab-playground/compare/v0.5.0...v0.6.0) (2026-11-21)
+
+
+### Added
+
+* **mcp:** tunnels, plugins, models, secrets and update check tools ([#18](https://github.com/zonzideka/colab-playground/issues/18)) ([f621556](https://github.com/zonzideka/colab-playground/commit/f6215563099c28a71c0fc76225d15f5234bbdd11))
+
 ## [0.5.0](https://github.com/zonzideka/colab-playground/compare/v0.4.0...v0.5.0) (2026-11-21)
 
 
