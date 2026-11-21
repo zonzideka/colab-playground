@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/zonzideka/colab-playground/compare/v0.4.0...v0.5.0) (2026-11-21)
+
+
+### Added
+
+* **mcp:** add the session lifecycle tools (start as operations, stop, extend, guard) ([#16](https://github.com/zonzideka/colab-playground/issues/16)) ([9222aeb](https://github.com/zonzideka/colab-playground/commit/9222aebe2d09cee0121c14b43dc7273f265b288c))
+
 ## [0.4.0](https://github.com/zonzideka/colab-playground/compare/v0.3.1...v0.4.0) (2026-11-21)
 
 
