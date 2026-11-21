@@ -150,6 +150,70 @@ mod reconciliation_tests {
     }
 
     #[test]
+    fn a_pending_stop_survives_a_listing_that_still_shows_the_endpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = RealConfig::for_app(Defaults::default()).unwrap();
+        config.local_dir = dir.path().to_owned();
+        let backend = RealBackend::new(config).unwrap();
+        let account = AccountId::new("alice").unwrap();
+        backend
+            .inner
+            .st()
+            .ledger
+            .upsert(TrackedSession {
+                name: "pending".into(),
+                account: account.clone(),
+                endpoint: Some("endpoint-pending".into()),
+                accelerator: Accelerator::T4,
+                high_mem: false,
+                gpu: None,
+                vram_mib: None,
+                policy: GuardPolicy::default(),
+                spend: SpendMeter::new(SystemTime::UNIX_EPOCH),
+                watchdog: None,
+                stopped: None,
+                stop_pending_confirmation: Some(StopReason::User),
+            })
+            .unwrap();
+        let entry = |backend: &RealBackend| {
+            backend
+                .inner
+                .st()
+                .ledger
+                .entries()
+                .iter()
+                .find(|e| e.name == "pending")
+                .unwrap()
+                .clone()
+        };
+        let sample = backend.inner.reconciliation_sample();
+
+        // The release already succeeded, so a listing that still shows the
+        // endpoint is stale: the stop is neither finalised nor dropped.
+        let listing = vec![RemoteAssignment {
+            endpoint: "endpoint-pending".into(),
+            accelerator: Some(Accelerator::T4),
+            accelerator_label: "T4".into(),
+            variant: "GPU".into(),
+            high_mem: false,
+        }];
+        let vanished = backend.inner.reconcile(&account, &listing, None, &sample);
+        assert!(vanished.is_empty());
+        let e = entry(&backend);
+        assert!(e.stopped.is_none());
+        assert_eq!(e.stop_pending_confirmation, Some(StopReason::User));
+
+        // Once a listing confirms the endpoint is gone, the pending stop is
+        // finalised with the user's reason, not a vanish.
+        let vanished = backend.inner.reconcile(&account, &[], None, &sample);
+        assert_eq!(vanished.len(), 1);
+        assert_eq!(vanished[0].reason, StopReason::User);
+        let e = entry(&backend);
+        assert_eq!(e.stopped.map(|s| s.reason), Some(StopReason::User));
+        assert!(e.stop_pending_confirmation.is_none());
+    }
+
+    #[test]
     fn a_session_that_ended_is_reported_even_when_the_ledger_cannot_be_saved() {
         let dir = tempfile::tempdir().unwrap();
         let mut config = RealConfig::for_app(Defaults::default()).unwrap();
@@ -908,7 +972,10 @@ impl Inner {
         for e in live {
             // A stop whose release succeeded but whose confirmation listing failed is
             // finalised here: once the endpoint is gone from the server's list the stop
-            // is confirmed, otherwise the runtime is a real orphan and stays live.
+            // is confirmed. A listing that still shows the endpoint is stale — the
+            // release already succeeded — so the pending reason is kept until a later
+            // listing confirms the endpoint is gone; dropping it here would record
+            // the stop as a vanish once the listing catches up.
             if let Some(reason) = e.stop_pending_confirmation.clone() {
                 let gone = e
                     .endpoint
@@ -930,10 +997,6 @@ impl Inner {
                         },
                         reason,
                     });
-                } else {
-                    let _ = st
-                        .ledger
-                        .update(account, &e.name, |x| x.stop_pending_confirmation = None);
                 }
                 continue;
             }
