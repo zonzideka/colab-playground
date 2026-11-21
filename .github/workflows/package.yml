@@ -98,21 +98,26 @@ jobs:
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "BASE=colab-playground-$version-$BUILD_TARGET" >> "$GITHUB_ENV"
+          echo "MCP_BASE=colab-playground-mcp-$version-$BUILD_TARGET" >> "$GITHUB_ENV"
 
       - name: Build
-        run: cargo build --release --locked -p colab-playground --target "$BUILD_TARGET"
+        run: cargo build --release --locked -p colab-playground -p colab-playground-mcp --target "$BUILD_TARGET"
 
       - name: Package (Windows, bare exe)
         if: runner.os == 'Windows'
         run: |
           exe="target/$BUILD_TARGET/release/colab-playground.exe"
+          mcp_exe="target/$BUILD_TARGET/release/colab-playground-mcp.exe"
           # A dynamically linked C runtime would import VCRUNTIME140.dll.
-          if grep -qai 'vcruntime140' "$exe"; then
-            echo "::error::$exe imports the Visual C++ runtime DLL; the static C runtime did not apply"
-            exit 1
-          fi
+          for f in "$exe" "$mcp_exe"; do
+            if grep -qai 'vcruntime140' "$f"; then
+              echo "::error::$f imports the Visual C++ runtime DLL; the static C runtime did not apply"
+              exit 1
+            fi
+          done
           mkdir -p dist
           cp "$exe" "dist/$BASE.exe"
+          cp "$mcp_exe" "dist/$MCP_BASE.exe"
           echo "ASSET=$BASE.exe" >> "$GITHUB_ENV"
 
       - name: Package (Linux, tar.gz)
@@ -121,6 +126,7 @@ jobs:
           stage="$RUNNER_TEMP/$BASE"
           mkdir -p "$stage" dist
           install -m 755 "target/$BUILD_TARGET/release/colab-playground" "$stage/colab-playground"
+          install -m 755 "target/$BUILD_TARGET/release/colab-playground-mcp" "$stage/colab-playground-mcp"
           # The shared libraries users need (docs/USAGE.md names the notable ones).
           readelf -d "$stage/colab-playground" | grep NEEDED
           install -m 644 LICENSE README.md "$stage/"
@@ -132,6 +138,10 @@ jobs:
           echo "$listing"
           if ! grep -Eq "^-rwxr-xr-x .* $BASE/colab-playground\$" <<<"$listing"; then
             echo "::error::The binary in the archive is not executable"
+            exit 1
+          fi
+          if ! grep -Eq "^-rwxr-xr-x .* $BASE/colab-playground-mcp\$" <<<"$listing"; then
+            echo "::error::The MCP binary in the archive is not executable"
             exit 1
           fi
           echo "ASSET=$BASE.tar.gz" >> "$GITHUB_ENV"
@@ -184,6 +194,10 @@ jobs:
           PLIST
           plutil -lint "$app/Contents/Info.plist"
           lipo -archs "$app/Contents/MacOS/colab-playground"
+          # The MCP server rides next to the .app in the zip (not inside the
+          # bundle: the app update only swaps the bundle, and the server is a
+          # separate program a user points their agent host at).
+          install -m 755 "target/$BUILD_TARGET/release/colab-playground-mcp" "$stage/colab-playground-mcp"
           # Ad-hoc signature (no Apple Developer ID, not notarised): Apple silicon runs only
           # signed code, and the signature seals Info.plist and the icon.
           codesign --force --sign - "$app"
@@ -205,6 +219,17 @@ jobs:
           if-no-files-found: error
           overwrite: true # a re-run of this job replaces its file
 
+      # Windows ships the MCP server as its own bare exe (on Linux and macOS
+      # it rides inside the archive). archive:false takes a single file, so
+      # it gets its own step.
+      - if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/${{ env.MCP_BASE }}.exe
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+
   checksums:
     name: SHA256SUMS
     needs: build
@@ -224,8 +249,8 @@ jobs:
         run: |
           ls -l
           count=$(find . -maxdepth 1 -type f -name 'colab-playground-*' | wc -l)
-          if [ "$count" -ne 3 ]; then
-            echo "::error::Expected 3 files, found $count"
+          if [ "$count" -ne 4 ]; then
+            echo "::error::Expected 4 files, found $count"
             exit 1
           fi
           sha256sum colab-playground-* > SHA256SUMS
@@ -260,8 +285,8 @@ jobs:
           ls -l
           sha256sum -c SHA256SUMS
           count=$(find . -maxdepth 1 -type f | wc -l)
-          if [ "$count" -ne 4 ]; then
-            echo "::error::Expected 3 files and SHA256SUMS, found $count files"
+          if [ "$count" -ne 5 ]; then
+            echo "::error::Expected 4 files and SHA256SUMS, found $count files"
             exit 1
           fi
       - name: Upload the files

@@ -488,6 +488,10 @@ pub(super) const MESSAGES: Messages = &[
         ERR_KEYRING_NOT_INSTALLED,
         "No keyring service is installed. On Ubuntu/Debian, run this command to install it, then restart the app: sudo apt install gnome-keyring",
     ),
+    (
+        ERR_DRIVER_ALREADY_RUNNING,
+        "Another Colab Playground window or MCP server is already using this data. Close the other one, then try again.",
+    ),
     (ERR_ADD_IN_PROGRESS, "Another sign-in is still in progress."),
     (
         ERR_LEGACY_TOKEN,

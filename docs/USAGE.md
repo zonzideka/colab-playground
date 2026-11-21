@@ -53,6 +53,32 @@ install the update in place.
   it by hand).
 - Demo data never contacts GitHub.
 
+## MCP server
+
+Releases also ship `colab-playground-mcp`, a headless
+[MCP](https://modelcontextprotocol.io) server that lets a local agent (an MCP
+host running as you, on this machine) work with the same accounts, balances
+and sessions as the GUI. It is in the Linux and macOS archives next to the
+app, and a separate `colab-playground-mcp-<version>-x86_64-pc-windows-msvc.exe`
+download on Windows. Point your agent host at the binary; it speaks MCP over
+stdio and opens no ports.
+
+- `colab-playground-mcp --real` drives the real CLI (the default in release
+  builds); `--mock` runs the deterministic simulation. The
+  `COLAB_PLAYGROUND_BACKEND` variable (`mock` or `real`) is the fallback,
+  exactly as for the app.
+- Tools today: `colab_status`, `accounts_list`, `usage_get`,
+  `usage_refresh`, `sessions_list`. Session start/stop and the rest of the
+  design in [the MCP design](mcp-design.md) are not in yet.
+- The server shares the app's data directory, so state is continuous with
+  the GUI. Because both write the ledger, only one driver — the app or a
+  server process — may hold the data directory at a time: a second one
+  fails with `driver_already_running` instead of starting.
+- Sign-in stays in the GUI: the server works with the accounts you already
+  added there. It also does not read the GUI's saved CLI-path or WSL
+  distribution settings yet; it finds the CLI automatically and uses the
+  default WSL distribution.
+
 ## Requirements
 
 - Rust: the version in `rust-version` under `[workspace.package]` in

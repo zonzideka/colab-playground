@@ -415,6 +415,10 @@ pub(super) const MESSAGES: Messages = &[
         ERR_KEYRING_NOT_INSTALLED,
         "系統未安裝金鑰圈服務。在 Ubuntu/Debian 上執行這條命令安裝，然後重新啟動應用程式：sudo apt install gnome-keyring",
     ),
+    (
+        ERR_DRIVER_ALREADY_RUNNING,
+        "另一個 Colab Playground 視窗或 MCP 伺服器正在使用這份資料。關閉另一個，然後重試。",
+    ),
     (ERR_ADD_IN_PROGRESS, "另一次登入仍在進行中。"),
     (
         ERR_LEGACY_TOKEN,

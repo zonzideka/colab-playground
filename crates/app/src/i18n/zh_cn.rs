@@ -407,6 +407,10 @@ pub(super) const MESSAGES: Messages = &[
         ERR_KEYRING_NOT_INSTALLED,
         "系统未安装密钥环服务。在 Ubuntu/Debian 上运行这条命令安装，然后重启应用：sudo apt install gnome-keyring",
     ),
+    (
+        ERR_DRIVER_ALREADY_RUNNING,
+        "另一个 Colab Playground 窗口或 MCP 服务器正在使用这份数据。关闭另一个，然后重试。",
+    ),
     (ERR_ADD_IN_PROGRESS, "另一次登录仍在进行中。"),
     (
         ERR_LEGACY_TOKEN,
