@@ -2,11 +2,18 @@
 
 Status: open questions decided by the user on 2026-11-20, adopting the local
 agent's (zonzi's) caller-side review on every point (see section 7).
-Implemented so far: rollout step 2 (2026-11-21) — the `colab-playground-mcp`
-crate with the first tools (`colab_status`, `accounts_list`,
-`usage_get`, `usage_refresh`, `sessions_list`) over stdio, against the mock
-and the real backend, with the section 5 driver lock. Session lifecycle
-tools and the rest follow the rollout in section 8.
+Implemented so far: rollout steps 2–3 (2026-11-21) — the
+`colab-playground-mcp` crate over stdio, against the mock and the real
+backend, with the section 5 driver lock. Step 2: `colab_status`,
+`accounts_list`, `usage_get`, `usage_refresh`, `sessions_list`. Step 3:
+the session lifecycle — `sessions_start` as operations with `request_id`
+idempotency, `operations_get`, `operations_cancel`, `sessions_stop`,
+`sessions_extend`, `guard_poll` — in VM-watchdog-only guard mode, with an
+operation reporting success only once the watchdog is confirmed armed.
+Operations live in the server process's memory; a restart loses them, and
+`sessions_list` is the reconciliation path (the sessions themselves are in
+the ledger either way). Tunnels, plugins, models and secrets follow the
+rollout in section 8.
 Goal: let a local agent (running on the same machine, under the same user
 account) drive Colab Playground's core directly — list accounts and balances,
 start and stop sessions, run guard checks, open tunnels, run plugins — without
@@ -300,9 +307,13 @@ Two verification principles are acceptance criteria, not aspirations:
    then the real backend.~~ Done 2026-11-21. The driver lock (section 5)
    landed with this step rather than step 3, because `sessions_list`
    already reconciles and writes the ledger on the real backend.
-3. Session lifecycle tools (start as operations / stop / extend / guard)
+3. ~~Session lifecycle tools (start as operations / stop / extend / guard)
    with the concurrency lock, including the two kill-and-reconnect
-   verification principles from section 7 as scripted tests.
+   verification principles from section 7 as scripted tests.~~ Done
+   2026-11-21. The principles are covered as scripted tests against the
+   mock backend: a retried `request_id` never provisions twice, and a
+   cancelled start ends cancelled with the core rolling the allocation
+   back. (The lock landed with step 2, in core.)
 4. Tunnels, plugins, models, secrets.
 5. Manual smoke: the local agent drives a full cycle — status, start a
    15-minute CPU session, list, stop — and the ledger records a user stop.

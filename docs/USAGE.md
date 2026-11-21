@@ -68,8 +68,12 @@ stdio and opens no ports.
   `COLAB_PLAYGROUND_BACKEND` variable (`mock` or `real`) is the fallback,
   exactly as for the app.
 - Tools today: `colab_status`, `accounts_list`, `usage_get`,
-  `usage_refresh`, `sessions_list`. Session start/stop and the rest of the
-  design in [the MCP design](mcp-design.md) are not in yet.
+  `usage_refresh`, `sessions_list`, `sessions_start`, `operations_get`,
+  `operations_cancel`, `sessions_stop`, `sessions_extend`, `guard_poll`.
+  Starting a session is asynchronous (it returns an operation to poll) and
+  runs in "VM-watchdog-only" guard mode: a maximum runtime is required and
+  is the only policy accepted. Tunnels, plugins, models and secrets from
+  [the MCP design](mcp-design.md) are not in yet.
 - The server shares the app's data directory, so state is continuous with
   the GUI. Because both write the ledger, only one driver — the app or a
   server process — may hold the data directory at a time: a second one
