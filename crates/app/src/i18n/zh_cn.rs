@@ -615,6 +615,10 @@ pub(super) const MESSAGES: Messages = &[
         PROV_WATCHDOG,
         "已在运行时上设置自动停止，即使关闭本应用也会生效。",
     ),
+    (
+        PROV_WATCHDOG_ATTEMPT,
+        "正在运行时上设置自动停止（第 {n} 次，共 {of} 次）…",
+    ),
     (PROV_WATCHDOG_NO_DEADLINE, "运行时上的看门程序已启动。"),
     (
         PROV_WATCHDOG_FAILED,

@@ -485,6 +485,7 @@ catalog_keys! {
     PROV_STARTING => "app.b2.prov_starting",
     PROV_VRAM_LOTTERY => "app.b2.prov_vram_lottery",
     PROV_WATCHDOG => "app.b2.prov_watchdog",
+    PROV_WATCHDOG_ATTEMPT => "app.b2.prov_watchdog_attempt",
     PROV_WATCHDOG_FAILED => "app.b2.prov_watchdog_failed",
     PROV_WATCHDOG_NO_DEADLINE => "app.b2.prov_watchdog_no_deadline",
     QUANT_ESTIMATE_NOTE => "app.b2.quant_estimate_note",

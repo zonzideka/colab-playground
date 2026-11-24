@@ -829,6 +829,10 @@ pub(super) const MESSAGES: Messages = &[
         "ランタイムに自動停止を設定しました。このアプリを閉じても機能します。",
     ),
     (
+        PROV_WATCHDOG_ATTEMPT,
+        "ランタイムに自動停止を設定中（{of} 回中 {n} 回目）…",
+    ),
+    (
         PROV_WATCHDOG_NO_DEADLINE,
         "ランタイムのウォッチドッグが動作しています。",
     ),

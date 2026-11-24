@@ -1846,9 +1846,48 @@ impl Backend for RealBackend {
             self.inner.cfg.clock.as_ref(),
             cancel,
             &|e| {
+                // Register the VM as soon as Colab answers, so a host that
+                // dies mid-provision still leaves a managed (reconcilable)
+                // entry. The event channel is fire-and-forget: never fail
+                // provisioning because the ledger could not be written.
+                if let ProvisionEvent::Allocated { .. } = &e {
+                    let _ = self.inner.st().ledger.upsert(TrackedSession {
+                        name: spec.name.clone(),
+                        account: account.clone(),
+                        endpoint: None,
+                        accelerator: spec.accelerator,
+                        high_mem: spec.high_mem,
+                        gpu: None,
+                        vram_mib: None,
+                        policy: spec.guard.clone(),
+                        spend: SpendMeter::new(self.inner.now()),
+                        watchdog: None,
+                        stopped: None,
+                        stop_pending_confirmation: None,
+                    });
+                }
                 let _ = events.send(e);
             },
-        )?;
+        );
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                // Every error path has already released the VM (or it was
+                // never allocated), so the early entry is now stopped. This
+                // is a no-op when no `Allocated` was ever emitted.
+                let _ = self
+                    .inner
+                    .st()
+                    .ledger
+                    .update(&account, &spec.name, |entry| {
+                        entry.stopped = Some(StopRecord {
+                            at: self.inner.now(),
+                            reason: StopReason::Provision,
+                        });
+                    });
+                return Err(e);
+            }
+        };
         let endpoint = if outcome.endpoint.is_empty() {
             // The kept session's endpoint could not be confirmed during
             // provisioning; fall back to the state file's name mapping.
@@ -1926,7 +1965,7 @@ impl Backend for RealBackend {
                 let ops = self
                     .inner
                     .ops(&cli, &target.account, &state, layout.host_scratch());
-                provision::start_watchdog(&ops, &name, &policy)
+                provision::start_watchdog(&ops, &name, &policy, &|_| {})
             });
             match started {
                 Ok(Some(info)) if info.armed => info,

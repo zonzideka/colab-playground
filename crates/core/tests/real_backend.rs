@@ -28,7 +28,9 @@ use colab_playground_core::real::{RealBackend, RealConfig};
 use colab_playground_core::sessions::{Accelerator, Ledger, StopReason, StopRecord, WatchdogInfo};
 use colab_playground_core::tunnel::{TunnelEvent, TunnelSpec, TunnelState};
 use colab_playground_core::vm::RunState;
-use colab_playground_core::{CancelToken, Defaults, ErrorKind, Host, ManualClock, Toolchain};
+use colab_playground_core::{
+    CancelToken, Defaults, ErrorKind, Host, ManualClock, SystemClock, Toolchain,
+};
 use serde_json::{Value, json};
 
 struct Fixture {
@@ -404,6 +406,19 @@ fn provision_retries_to_80_gb_and_enforces_entitlement_and_cap() {
     assert_eq!(only["vram"], 81_920);
     assert_eq!(only["watchdog"]["grace_s"], 300.0);
 
+    // T5: the early entry was replaced by the complete one on success.
+    let entries: Vec<serde_json::Value> = serde_json::from_str(
+        &std::fs::read_to_string(f.cfg.local_dir.join("ledger.json")).unwrap(),
+    )
+    .unwrap();
+    let tracked = entries
+        .iter()
+        .find(|e| e["name"] == json!("big"))
+        .expect("successful session's ledger entry");
+    assert!(tracked["endpoint"].is_string(), "{tracked}");
+    assert!(tracked["watchdog"].is_object(), "{tracked}");
+    assert!(tracked["stopped"].is_null(), "{tracked}");
+
     f.knob("deny", json!(["H100"]));
     let (tx, _rx) = channel();
     let err =
@@ -497,6 +512,64 @@ fn a_request_colab_never_answers_fails_once_and_a_cancel_kills_it() {
         f.assignments("alice").is_empty(),
         "the VM the request got anyway was left: {:?}",
         f.assignments("alice")
+    );
+}
+
+/// T4: the VM is registered at `Allocated`, before provisioning finishes, and
+/// a provision that is cancelled after that closes the entry instead of
+/// leaving a live session that would block a new one of the same name.
+#[test]
+fn an_allocated_session_is_registered_before_provisioning_finishes() {
+    let f = fixture();
+    let alice = f.adopt_alice();
+    f.knob("a100_sequence", json!([40_960]));
+    let mut spec = ProvisionSpec::new("early", Accelerator::A100, &Defaults::default());
+    spec.min_vram_mib = Some(70_000);
+    spec.max_attempts = 2;
+    // Keep the worker in the retry sleep until the ledger has been inspected.
+    spec.retry_delay = Duration::from_secs(60);
+    let mut cfg = f.cfg.clone();
+    cfg.clock = Arc::new(SystemClock);
+    let b = RealBackend::new(cfg).unwrap();
+
+    let cancel = CancelToken::new();
+    let (tx, rx) = channel();
+    let worker_cancel = cancel.clone();
+    let worker = std::thread::spawn(move || b.provision(spec, tx, &worker_cancel));
+    assert!(
+        wait_for(&rx, 30, |e| matches!(e, ProvisionEvent::Retrying { .. })).is_some(),
+        "the below-spec VM was never retried"
+    );
+
+    let ledger_path = f.cfg.local_dir.join("ledger.json");
+    let entry = |name: &str| -> serde_json::Value {
+        let entries: Vec<serde_json::Value> =
+            serde_json::from_str(&std::fs::read_to_string(&ledger_path).unwrap()).unwrap();
+        entries
+            .into_iter()
+            .find(|e| e["name"] == json!(name))
+            .unwrap_or_else(|| panic!("no ledger entry for {name}"))
+    };
+    let early = entry("early");
+    assert!(early["stopped"].is_null(), "{early}");
+    assert!(early["endpoint"].is_null(), "{early}");
+    assert!(early["watchdog"].is_null(), "{early}");
+
+    cancel.cancel();
+    let err = worker.join().unwrap().unwrap_err();
+    assert!(err.is(ErrorKind::Cancelled), "{err}");
+    let closed = entry("early");
+    assert_eq!(
+        closed["stopped"]["reason"]["kind"],
+        json!("provision"),
+        "{closed}"
+    );
+    assert!(
+        Ledger::load(&ledger_path)
+            .unwrap()
+            .live(&alice.id, "early")
+            .is_none(),
+        "the aborted session is still live"
     );
 }
 

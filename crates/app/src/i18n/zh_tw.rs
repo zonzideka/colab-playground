@@ -626,6 +626,10 @@ pub(super) const MESSAGES: Messages = &[
         PROV_WATCHDOG,
         "已在執行階段上設定自動停止，即使關閉本應用程式也會生效。",
     ),
+    (
+        PROV_WATCHDOG_ATTEMPT,
+        "正在執行階段上設定自動停止（第 {n} 次，共 {of} 次）…",
+    ),
     (PROV_WATCHDOG_NO_DEADLINE, "執行階段上的監控程式已啟動。"),
     (
         PROV_WATCHDOG_FAILED,

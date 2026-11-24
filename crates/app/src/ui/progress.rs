@@ -135,6 +135,20 @@ pub fn sentence(event: &ProvisionEvent, done: bool, cx: &App) -> Option<(SharedS
             ),
             Tone::Busy,
         ),
+        ProvisionEvent::WatchdogAttempt {
+            attempt,
+            max_attempts,
+        } => (
+            tr_args(
+                cx,
+                keys::PROV_WATCHDOG_ATTEMPT,
+                &[
+                    ("n", &attempt.to_string()),
+                    ("of", &max_attempts.to_string()),
+                ],
+            ),
+            Tone::Busy,
+        ),
         ProvisionEvent::WatchdogStarted { deadline: Some(_) } => {
             (tr(cx, keys::PROV_WATCHDOG), Tone::Good)
         }
