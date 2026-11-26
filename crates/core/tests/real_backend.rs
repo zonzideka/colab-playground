@@ -573,6 +573,54 @@ fn an_allocated_session_is_registered_before_provisioning_finishes() {
     );
 }
 
+/// A provision rejected because the name is taken registered nothing, so it
+/// must not close the existing session's entry: that session is still
+/// running, and marking it stopped would drop it from the cost guard.
+#[test]
+fn a_duplicate_name_rejection_keeps_the_existing_entry_live() {
+    let f = fixture();
+    let alice = f.adopt_alice();
+    f.provision("taken", Accelerator::T4);
+
+    let (tx, _rx) = channel();
+    let err =
+        f.b.provision(
+            ProvisionSpec::new("taken", Accelerator::T4, &Defaults::default()),
+            tx,
+            &nc(),
+        )
+        .unwrap_err();
+    assert!(err.is(ErrorKind::InvalidInput), "{err}");
+    let ledger = Ledger::load(&f.cfg.local_dir.join("ledger.json")).unwrap();
+    assert!(
+        ledger.live(&alice.id, "taken").is_some(),
+        "the running session's entry was closed by a rejected provision"
+    );
+}
+
+/// A below-spec VM whose release cannot be confirmed fails the provision
+/// with `OrphanSuspected`; the early entry then stays live, because the VM
+/// may still be running and billed — reconciliation, not a stop that never
+/// happened, settles whether it disappeared.
+#[test]
+fn an_unconfirmed_release_keeps_the_early_entry_live() {
+    let f = fixture();
+    let alice = f.adopt_alice();
+    f.knob("a100_sequence", json!([40_960]));
+    f.knob("stop_noop", json!(true));
+    let mut spec = ProvisionSpec::new("orphan", Accelerator::A100, &Defaults::default());
+    spec.min_vram_mib = Some(70_000);
+    spec.max_attempts = 1;
+    let (tx, _rx) = channel();
+    let err = f.b.provision(spec, tx, &nc()).unwrap_err();
+    assert!(err.is(ErrorKind::OrphanSuspected), "{err}");
+    let ledger = Ledger::load(&f.cfg.local_dir.join("ledger.json")).unwrap();
+    assert!(
+        ledger.live(&alice.id, "orphan").is_some(),
+        "the possibly still-running VM was recorded as stopped"
+    );
+}
+
 /// Setting an auto-stop after a cancel puts it back on the runtime: the
 /// watchdog is started again the way provisioning starts it.
 #[test]
