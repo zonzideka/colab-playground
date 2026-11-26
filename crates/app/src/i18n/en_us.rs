@@ -751,6 +751,10 @@ pub(super) const MESSAGES: Messages = &[
         "Auto-stop is set on the runtime; it works even if this app is closed.",
     ),
     (
+        PROV_WATCHDOG_ATTEMPT,
+        "Setting the automatic stop on the runtime (attempt {n} of {of})…",
+    ),
+    (
         PROV_WATCHDOG_NO_DEADLINE,
         "The runtime's watchdog is running.",
     ),

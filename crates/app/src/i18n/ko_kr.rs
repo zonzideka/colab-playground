@@ -760,6 +760,10 @@ pub(super) const MESSAGES: Messages = &[
         "런타임에 자동 중지를 설정했습니다. 이 앱을 닫아도 작동합니다.",
     ),
     (
+        PROV_WATCHDOG_ATTEMPT,
+        "런타임에 자동 중지를 설정하는 중({of}회 중 {n}번째)…",
+    ),
+    (
         PROV_WATCHDOG_NO_DEADLINE,
         "런타임의 워치독이 실행 중입니다.",
     ),

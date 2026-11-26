@@ -326,6 +326,11 @@ def record_history(session, env, code, result):
 def cmd_stop(state_path, args):
     name = require_account()
     session = opt(args, "-s", "--session")
+    if fc.knob("stop_noop"):
+        # Acknowledged but never carried out: the assignment and the local
+        # record both survive, so only a fresh listing reveals the truth.
+        out("[colab] Session terminated.")
+        return 0
     records = load_state(state_path)
     rec = records.get(session)
     if rec is None:

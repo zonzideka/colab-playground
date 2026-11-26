@@ -1582,7 +1582,7 @@ impl Backend for MockBackend {
                 account: target.account.clone(),
                 restart: true,
             };
-            match provision::start_watchdog(&ops, &name, &policy) {
+            match provision::start_watchdog(&ops, &name, &policy, &|_| {}) {
                 Ok(Some(info)) if info.armed => info,
                 _ => crate::watchdog::start_failed(&policy),
             }

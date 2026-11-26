@@ -44,6 +44,7 @@ DEFAULT_KNOBS = {
     "plugin_stages": ["detect", "plan", "download", "server", "warmup"],
     "ssh_busy": False,              # proxy-mode answers HTTP 429
     "watchdog_start_fails": False,  # a started watchdog exits at once
+    "stop_noop": False,             # stop claims success but the VM stays assigned
     "keyring_locked": False,        # keyring reads fail
     "keyring_service_down": False,  # keyring ops fail as if the Secret Service were down
     "keyring_no_backend": False,    # keyring resolves only its fail backend

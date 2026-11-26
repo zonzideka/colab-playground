@@ -181,6 +181,14 @@ pub enum ProvisionEvent {
         /// Delay in seconds.
         delay_secs: u64,
     },
+    /// Emitted before each watchdog start attempt. Without it, callers (the
+    /// MCP op's stage included) sit at `probed` with no explanation while an
+    /// attempt is in flight and may take minutes.
+    WatchdogAttempt {
+        /// 1-based attempt.
+        attempt: u32,
+        max_attempts: u32,
+    },
     WatchdogStarted {
         /// Its deadline (local clock), if any.
         #[serde(with = "crate::clock::serde_secs::option")]
@@ -271,10 +279,15 @@ pub fn start_watchdog(
     ops: &dyn ProvisionOps,
     name: &str,
     policy: &GuardPolicy,
+    events: &dyn Fn(ProvisionEvent),
 ) -> Result<Option<WatchdogInfo>> {
     let nc = CancelToken::new();
     let mut last = Error::new(ErrorKind::Other);
-    for _ in 0..WATCHDOG_ATTEMPTS {
+    for i in 0..WATCHDOG_ATTEMPTS {
+        events(ProvisionEvent::WatchdogAttempt {
+            attempt: i + 1,
+            max_attempts: WATCHDOG_ATTEMPTS,
+        });
         match ops.start_watchdog(name, policy, &nc) {
             Ok(w) => return Ok(w),
             Err(e) => last = e,
@@ -559,7 +572,7 @@ fn run(
             return Err(Error::cancelled());
         }
         let watchdog = if spec.guard.needs_watchdog() {
-            match start_watchdog(ops, name, &spec.guard) {
+            match start_watchdog(ops, name, &spec.guard, events) {
                 Ok(w) => {
                     events(ProvisionEvent::WatchdogStarted {
                         deadline: w.as_ref().and_then(|w| w.deadline),
@@ -770,6 +783,15 @@ mod tests {
         (r, events.into_inner(), clock)
     }
 
+    fn watchdog_attempts(ev: &[ProvisionEvent]) -> Vec<u32> {
+        ev.iter()
+            .filter_map(|e| match e {
+                ProvisionEvent::WatchdogAttempt { attempt, .. } => Some(*attempt),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn retries_from_40_to_80_gb() {
         let f = Fake {
@@ -834,17 +856,21 @@ mod tests {
             ..Default::default()
         };
         let policy = GuardPolicy::default();
-        let w = start_watchdog(&f, "s", &policy).unwrap();
+        let ev = RefCell::new(Vec::new());
+        let w = start_watchdog(&f, "s", &policy, &|e| ev.borrow_mut().push(e)).unwrap();
         assert!(w.is_some_and(|w| w.armed));
         assert_eq!(watchdogs(&f), 3);
+        assert_eq!(watchdog_attempts(&ev.borrow()), [1, 2, 3]);
 
         let f = Fake {
             watchdog_failures: RefCell::new(WATCHDOG_ATTEMPTS),
             ..Default::default()
         };
-        let err = start_watchdog(&f, "s", &policy).unwrap_err();
+        let ev = RefCell::new(Vec::new());
+        let err = start_watchdog(&f, "s", &policy, &|e| ev.borrow_mut().push(e)).unwrap_err();
         assert_eq!(err.detail, "not running");
         assert_eq!(watchdogs(&f), WATCHDOG_ATTEMPTS as usize);
+        assert_eq!(watchdog_attempts(&ev.borrow()), [1, 2, 3]);
 
         // Provisioning keeps the session and reports that the stop is not on it.
         let f = Fake {
@@ -862,6 +888,63 @@ mod tests {
             ev.iter()
                 .any(|e| matches!(e, ProvisionEvent::WatchdogFailed { .. }))
         );
+        // T2: every failed try is announced, then the failure is reported.
+        assert_eq!(watchdog_attempts(&ev), [1, 2, 3]);
+        let steps: Vec<&str> = ev
+            .iter()
+            .filter_map(|e| match e {
+                ProvisionEvent::WatchdogAttempt { .. } => Some("attempt"),
+                ProvisionEvent::WatchdogFailed { .. } => Some("failed"),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(steps, ["attempt", "attempt", "attempt", "failed"]);
+    }
+
+    #[test]
+    fn watchdog_attempt_events_are_emitted_on_each_try() {
+        // T1: two failures then success: three attempts, then WatchdogStarted.
+        let f = Fake {
+            creates: RefCell::new(VecDeque::from([Ok(15_360)])),
+            watchdog_failures: RefCell::new(2),
+            ..Default::default()
+        };
+        let (r, ev, _) = run_fake(
+            &f,
+            &spec(None, 1, OnExhausted::StopAndFail),
+            &CancelToken::new(),
+        );
+        assert!(r.unwrap().watchdog.is_some_and(|w| w.armed));
+        assert_eq!(watchdog_attempts(&ev), [1, 2, 3]);
+        let steps: Vec<&str> = ev
+            .iter()
+            .filter_map(|e| match e {
+                ProvisionEvent::WatchdogAttempt { .. } => Some("attempt"),
+                ProvisionEvent::WatchdogStarted { .. } => Some("started"),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(steps, ["attempt", "attempt", "attempt", "started"]);
+
+        // T3: one successful try produces exactly one attempt event.
+        let f = Fake {
+            creates: RefCell::new(VecDeque::from([Ok(15_360)])),
+            ..Default::default()
+        };
+        let (r, ev, _) = run_fake(
+            &f,
+            &spec(None, 1, OnExhausted::StopAndFail),
+            &CancelToken::new(),
+        );
+        assert!(r.unwrap().watchdog.is_some_and(|w| w.armed));
+        assert_eq!(watchdog_attempts(&ev), [1]);
+        assert!(ev.iter().any(|e| matches!(
+            e,
+            ProvisionEvent::WatchdogAttempt {
+                attempt: 1,
+                max_attempts: WATCHDOG_ATTEMPTS
+            }
+        )));
     }
 
     #[test]

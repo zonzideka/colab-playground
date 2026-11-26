@@ -1839,6 +1839,10 @@ impl Backend for RealBackend {
         let ops = self
             .inner
             .ops(&cli, &account, &state, layout.host_scratch());
+        // Set when this call's `Allocated` handler has written the early
+        // ledger entry. The failure path below may only close that entry,
+        // never a pre-existing one that happens to share the name.
+        let registered = std::cell::Cell::new(false);
         let outcome = provision::provision(
             &ops,
             &spec,
@@ -1846,9 +1850,58 @@ impl Backend for RealBackend {
             self.inner.cfg.clock.as_ref(),
             cancel,
             &|e| {
+                // Register the VM as soon as Colab answers, so a host that
+                // dies mid-provision still leaves a managed (reconcilable)
+                // entry. The event channel is fire-and-forget: never fail
+                // provisioning because the ledger could not be written.
+                if let ProvisionEvent::Allocated { .. } = &e {
+                    let upserted = self.inner.st().ledger.upsert(TrackedSession {
+                        name: spec.name.clone(),
+                        account: account.clone(),
+                        endpoint: None,
+                        accelerator: spec.accelerator,
+                        high_mem: spec.high_mem,
+                        gpu: None,
+                        vram_mib: None,
+                        policy: spec.guard.clone(),
+                        spend: SpendMeter::new(self.inner.now()),
+                        watchdog: None,
+                        stopped: None,
+                        stop_pending_confirmation: None,
+                    });
+                    if upserted.is_ok() {
+                        registered.set(true);
+                    }
+                }
                 let _ = events.send(e);
             },
-        )?;
+        );
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                // Close only the entry this call registered, and only when
+                // the VM is known to be gone. A failure before `Allocated`
+                // (a duplicate name, the session limit) registered nothing,
+                // and a same-named entry already in the ledger belongs to a
+                // session that is still running. When cleanup could not
+                // confirm the release (`OrphanSuspected`) the VM may still
+                // be running and billed, so the entry stays live and
+                // reconciliation settles whether it actually disappeared.
+                if registered.get() && !e.is(ErrorKind::OrphanSuspected) {
+                    let _ = self
+                        .inner
+                        .st()
+                        .ledger
+                        .update(&account, &spec.name, |entry| {
+                            entry.stopped = Some(StopRecord {
+                                at: self.inner.now(),
+                                reason: StopReason::Provision,
+                            });
+                        });
+                }
+                return Err(e);
+            }
+        };
         let endpoint = if outcome.endpoint.is_empty() {
             // The kept session's endpoint could not be confirmed during
             // provisioning; fall back to the state file's name mapping.
@@ -1926,7 +1979,7 @@ impl Backend for RealBackend {
                 let ops = self
                     .inner
                     .ops(&cli, &target.account, &state, layout.host_scratch());
-                provision::start_watchdog(&ops, &name, &policy)
+                provision::start_watchdog(&ops, &name, &policy, &|_| {})
             });
             match started {
                 Ok(Some(info)) if info.armed => info,
