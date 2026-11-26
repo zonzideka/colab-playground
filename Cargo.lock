@@ -1088,7 +1088,7 @@ dependencies = [
 
 [[package]]
 name = "colab-playground"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "colab-playground-core",
@@ -1111,7 +1111,7 @@ dependencies = [
 
 [[package]]
 name = "colab-playground-core"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "base64 0.22.1",
  "dirs 6.0.0",
@@ -1127,7 +1127,7 @@ dependencies = [
 
 [[package]]
 name = "colab-playground-mcp"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "colab-playground-core",
  "rmcp",

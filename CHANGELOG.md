@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/zonzideka/colab-playground/compare/v0.6.0...v0.6.1) (2026-11-26)
+
+
+### Fixed
+
+* **core:** register the session in the ledger at allocation and report each watchdog attempt ([#20](https://github.com/zonzideka/colab-playground/issues/20)) ([f48708c](https://github.com/zonzideka/colab-playground/commit/f48708c72f9fa85d3649735117608610b08ddd2d))
+
 ## [0.6.0](https://github.com/zonzideka/colab-playground/compare/v0.5.0...v0.6.0) (2026-11-21)
 
 
